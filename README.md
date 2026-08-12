@@ -205,6 +205,8 @@ The memory system creates instruction pages for three meaningful roles when the 
 
 These pages are operating context, not agent registrations. If the corresponding OpenClaw agent is absent, JARVIS cannot create it from the dashboard.
 
+<img width="1661" height="785" alt="image" src="https://github.com/user-attachments/assets/6f658d54-3367-4a70-8b78-708850383184" />
+
 ### Delegation and tool selection
 
 Tool and agent selection depends on the workflow:
@@ -233,6 +235,8 @@ Cancellation changes the owned runtime state. Extraction cancellation aborts the
 ## Memory and knowledge
 
 The Second Brain is a password-gated section, using the same short-lived, rate-limited access pattern as Hunting. Both sections are locked because they contain sensitive personal information about the operator, including identity, career, application, and private life context. The memory lock protects direct browsing and editing of the vault; the memory system still supplies approved context to authorized agent workflows as part of normal JARVIS operation.
+
+<img width="1663" height="963" alt="image" src="https://github.com/user-attachments/assets/300a69f7-b50e-4b75-8e77-be894b63eecc" />
 
 ### Canonical data model
 
@@ -376,6 +380,8 @@ The longer capture and replay notes live in `docs/workflow-learning.md`.
 Hunting is a password-gated section for CV management, job discovery, and controlled application preparation. Its access token is short-lived and held by the client after a same-origin unlock. Repeated failed unlock attempts are rate-limited.
 
 Hunting is locked for the same privacy reason as the Second Brain: it contains sensitive personal information about the operator, including CV content, job-search preferences, application artifacts, and application history.
+
+<img width="1708" height="842" alt="image" src="https://github.com/user-attachments/assets/a4d319a5-7a14-4a81-90e3-3d09add40d4f" />
 
 ### CV and discovery
 
