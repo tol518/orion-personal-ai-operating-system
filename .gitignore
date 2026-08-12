@@ -1,0 +1,35 @@
+# Dependencies and generated client output
+node_modules/
+client/dist/
+*.tsbuildinfo
+coverage/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime state and user-generated content
+server/data/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.log
+*.pid
+*.sock
+
+# Editor, OS, and temporary files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.tmp
+*.bak
+
+# Public-release denylist supplied outside the repository
+.public-release-denylist

@@ -1,0 +1,117 @@
+{
+  "id": "demo-submit-monthly-invoice",
+  "name": "Submit monthly invoice",
+  "description": "Create a monthly invoice in Ledgerly for one client, attach the PDF, review the totals, and stop for approval before it is sent.",
+  "source": {
+    "screenpipeSessionStart": "2026-07-29T09:00:00Z",
+    "screenpipeSessionEnd": "2026-07-29T09:05:00Z",
+    "apps": ["Ledgerly", "Google Chrome"],
+    "urls": ["https://app.ledgerly.example/invoices/new/review"]
+  },
+  "variables": [
+    {
+      "name": "clientName",
+      "description": "The client the invoice is raised against, as it appears in Ledgerly",
+      "required": true,
+      "example": "Northwind Trading"
+    },
+    {
+      "name": "invoiceMonth",
+      "description": "The month the invoice covers",
+      "required": true,
+      "example": "July 2026"
+    },
+    {
+      "name": "invoicePdfName",
+      "description": "File name of the prepared invoice PDF to attach",
+      "required": false,
+      "example": "July-invoice.pdf"
+    }
+  ],
+  "steps": [
+    {
+      "id": "open-ledgerly",
+      "instruction": "Open the Ledgerly invoices area.",
+      "app": "Google Chrome",
+      "url": "https://app.ledgerly.example/invoices",
+      "actionType": "navigate",
+      "successCheck": "Invoices",
+      "fallback": "If a sign-in page appears instead, stop and ask the user to sign in; never enter credentials.",
+      "requiresUserConfirmation": false
+    },
+    {
+      "id": "new-invoice",
+      "instruction": "Start a new invoice.",
+      "app": "Google Chrome",
+      "actionType": "click",
+      "target": { "text": "New invoice", "visualDescription": "primary button at the top right of the invoice list" },
+      "successCheck": "Client name",
+      "fallback": "If there is no New invoice button, look for a plus control in the invoices toolbar.",
+      "requiresUserConfirmation": false
+    },
+    {
+      "id": "fill-client",
+      "instruction": "Set the client to {{clientName}}.",
+      "app": "Google Chrome",
+      "actionType": "type",
+      "target": { "text": "Client name" },
+      "input": "{{clientName}}",
+      "successCheck": "{{clientName}}",
+      "fallback": "If the field is a searchable dropdown, type the name and pick the exact match.",
+      "requiresUserConfirmation": false
+    },
+    {
+      "id": "set-period",
+      "instruction": "Set the invoice period to {{invoiceMonth}}.",
+      "app": "Google Chrome",
+      "actionType": "type",
+      "target": { "text": "Period" },
+      "input": "{{invoiceMonth}}",
+      "fallback": "If the period is a month picker rather than a text field, select the month named by the variable.",
+      "requiresUserConfirmation": false
+    },
+    {
+      "id": "attach-pdf",
+      "instruction": "Attach the prepared invoice PDF {{invoicePdfName}} to the invoice.",
+      "app": "Google Chrome",
+      "actionType": "custom",
+      "target": { "text": "Attach file", "visualDescription": "attachment row below the line items" },
+      "input": "{{invoicePdfName}}",
+      "successCheck": "{{invoicePdfName}}",
+      "fallback": "If no file chooser opens, tell the user which control was found and stop rather than guessing.",
+      "requiresUserConfirmation": false
+    },
+    {
+      "id": "review-totals",
+      "instruction": "Open the review screen and read the invoice total back to the user.",
+      "app": "Google Chrome",
+      "url": "https://app.ledgerly.example/invoices/new/review",
+      "actionType": "verify",
+      "successCheck": "Review before sending",
+      "fallback": "If the review screen does not load, report the current URL and stop.",
+      "requiresUserConfirmation": false
+    },
+    {
+      "id": "send-invoice",
+      "instruction": "Send the invoice to {{clientName}}.",
+      "app": "Google Chrome",
+      "actionType": "confirm",
+      "target": { "text": "Send invoice" },
+      "successCheck": "Invoice sent",
+      "fallback": "If sending fails, leave the invoice as a draft and tell the user.",
+      "requiresUserConfirmation": true
+    }
+  ],
+  "safety": {
+    "riskLevel": "medium",
+    "requiresConfirmationBeforeRun": true,
+    "blockedActions": [
+      "solving or bypassing a CAPTCHA or anti-bot challenge",
+      "completing an identity or email verification",
+      "entering a password, passcode, one-time code, or 2FA response",
+      "creating an account",
+      "entering payment details",
+      "changing the client's bank details or payment terms"
+    ]
+  }
+}

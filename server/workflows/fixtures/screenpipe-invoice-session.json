@@ -1,0 +1,165 @@
+{
+  "_comment": "A recorded 'submit monthly invoice' session as Screenpipe's GET /search returns it (docs.screenpipe.com/api-reference). Deliberately includes the awkward cases: OCR repeating the same line every frame, a revealed password, a password-manager window, a click with coordinates but no element name, and an unrelated Slack notification. The tests assert each of those is handled rather than passed through.",
+  "data": [
+    {
+      "type": "OCR",
+      "content": {
+        "frame_id": 9001,
+        "text": "Ledgerly — Dashboard",
+        "timestamp": "2026-07-29T09:00:01Z",
+        "file_path": "/Users/example/.screenpipe/data/frame-9001.mp4",
+        "offset_index": 0,
+        "app_name": "Ledgerly",
+        "window_name": "Ledgerly — Dashboard",
+        "focused": true,
+        "device_name": "MacBook"
+      }
+    },
+    {
+      "type": "OCR",
+      "content": {
+        "frame_id": 9002,
+        "text": "Ledgerly — Dashboard",
+        "timestamp": "2026-07-29T09:00:02Z",
+        "app_name": "Ledgerly",
+        "window_name": "Ledgerly — Dashboard",
+        "focused": true
+      }
+    },
+    {
+      "type": "UI",
+      "content": {
+        "id": 5101,
+        "text": "New invoice",
+        "timestamp": "2026-07-29T09:00:03Z",
+        "app_name": "Ledgerly",
+        "window_name": "Ledgerly — Dashboard"
+      }
+    },
+    {
+      "type": "Input",
+      "content": {
+        "id": 7101,
+        "timestamp": "2026-07-29T09:00:04Z",
+        "event_type": "click",
+        "app_name": "Ledgerly",
+        "window_title": "Ledgerly — Dashboard",
+        "element_name": "New invoice",
+        "element_role": "button",
+        "x": 812,
+        "y": 190
+      }
+    },
+    {
+      "type": "UI",
+      "content": {
+        "id": 5102,
+        "text": "Client name",
+        "timestamp": "2026-07-29T09:00:09Z",
+        "app_name": "Ledgerly",
+        "window_name": "Ledgerly — New invoice"
+      }
+    },
+    {
+      "type": "Input",
+      "content": {
+        "id": 7102,
+        "timestamp": "2026-07-29T09:00:11Z",
+        "event_type": "type",
+        "app_name": "Ledgerly",
+        "window_title": "Ledgerly — New invoice",
+        "element_name": "Client name",
+        "element_role": "textbox",
+        "text_content": "Northwind Trading"
+      }
+    },
+    {
+      "type": "Input",
+      "content": {
+        "id": 7103,
+        "timestamp": "2026-07-29T09:00:20Z",
+        "event_type": "click",
+        "app_name": "Ledgerly",
+        "window_title": "Ledgerly — New invoice",
+        "x": 640,
+        "y": 455
+      }
+    },
+    {
+      "type": "OCR",
+      "content": {
+        "frame_id": 9010,
+        "text": "Attach file — July-invoice.pdf selected",
+        "timestamp": "2026-07-29T09:00:24Z",
+        "app_name": "Ledgerly",
+        "window_name": "Ledgerly — New invoice"
+      }
+    },
+    {
+      "type": "OCR",
+      "content": {
+        "frame_id": 9011,
+        "text": "Sign in to Ledgerly — password: hunter2-northwind",
+        "timestamp": "2026-07-29T09:00:30Z",
+        "app_name": "Ledgerly",
+        "window_name": "Ledgerly — Sign in"
+      }
+    },
+    {
+      "type": "OCR",
+      "content": {
+        "frame_id": 9012,
+        "text": "Northwind Trading vault entry 4242 4242 4242 4242",
+        "timestamp": "2026-07-29T09:00:33Z",
+        "app_name": "1Password",
+        "window_name": "1Password — All Vaults"
+      }
+    },
+    {
+      "type": "OCR",
+      "content": {
+        "frame_id": 9020,
+        "text": "Slack — Dave: are you coming to standup?",
+        "timestamp": "2026-07-29T09:00:40Z",
+        "app_name": "Slack",
+        "window_name": "Slack — general"
+      }
+    },
+    {
+      "type": "OCR",
+      "content": {
+        "frame_id": 9030,
+        "text": "Invoice total £4,820.00 — Review before sending",
+        "timestamp": "2026-07-29T09:00:52Z",
+        "app_name": "Google Chrome",
+        "window_name": "Ledgerly — Review invoice",
+        "browser_url": "https://app.ledgerly.example/invoices/new/review"
+      }
+    },
+    {
+      "type": "UI",
+      "content": {
+        "id": 5140,
+        "text": "Send invoice",
+        "timestamp": "2026-07-29T09:00:55Z",
+        "app_name": "Google Chrome",
+        "window_name": "Ledgerly — Review invoice",
+        "browser_url": "https://app.ledgerly.example/invoices/new/review"
+      }
+    },
+    {
+      "type": "Audio",
+      "content": {
+        "chunk_id": 3301,
+        "transcription": "I always check the totals here before I send it to the client.",
+        "timestamp": "2026-07-29T09:00:57Z",
+        "device_name": "MacBook Microphone",
+        "device_type": "input",
+        "speaker": { "id": 1, "name": "the user" },
+        "start_time": "2026-07-29T09:00:57Z",
+        "end_time": "2026-07-29T09:01:01Z"
+      }
+    }
+  ],
+  "pagination": { "limit": 100, "offset": 0, "total": 14 }
+}

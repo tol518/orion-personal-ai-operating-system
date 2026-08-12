@@ -1,0 +1,22 @@
+{
+  "name": "jarvis-bff",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend-for-frontend that bridges the Jarvis dashboard to the OpenClaw gateway.",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mammoth": "^1.10.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.4.296",
+    "pdfkit": "^0.19.1",
+    "ws": "^8.18.0",
+    "yaml": "^2.8.3"
+  }
+}
