@@ -6,6 +6,8 @@ The project demonstrates how to turn capable AI agents into a usable, stateful p
 
 This public repository is a technical portfolio of the JARVIS project for recruiters and other technical reviewers. It includes the application architecture, frontend, backend, persistence, agent orchestration, safety controls, tests, and documentation needed to understand how the system works.
 
+<img width="1918" height="986" alt="image" src="https://github.com/user-attachments/assets/962d744b-0f9f-4ba4-82ff-f02bb84253c4" />
+
 ## Why this project is worth reviewing
 
 JARVIS is more than a chat screen. It connects model-driven reasoning to persistent state, real tools, local devices, and reviewable workflows while keeping sensitive actions behind explicit boundaries.
