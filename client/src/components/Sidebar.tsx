@@ -58,10 +58,17 @@ export default function Sidebar({
   memoryUnlocked: boolean;
 }) {
   return (
-    <aside className="hidden w-56 shrink-0 flex-col border-r border-hudborder bg-surface-1/80 backdrop-blur md:flex">
-      <div className="border-b border-hudborder p-4">
-        <div className="wordmark text-lg text-accent text-glow">J.A.R.V.I.S</div>
-        <div className="hud-label mt-1 text-[0.55rem]">OPENCLAW CONTROL</div>
+    <aside className="orion-sidebar hidden w-56 shrink-0 flex-col border-r border-hudborder bg-surface-1/80 backdrop-blur md:flex">
+      <div className="orion-sidebar__brand border-b border-hudborder p-4">
+        <div className="orion-brand">
+          <span className="orion-brand__emblem" aria-hidden="true">
+            <img src="/brand/orion-identity.png" alt="" />
+          </span>
+          <div>
+            <div className="wordmark text-lg text-accent text-glow">ORION</div>
+            <div className="hud-label mt-1 text-[0.55rem]">OPENCLAW CONTROL</div>
+          </div>
+        </div>
       </div>
       <nav className="flex-1 space-y-1 p-3">
         {NAV.map((it) => {

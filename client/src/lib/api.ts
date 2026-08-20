@@ -28,6 +28,33 @@ export type ExecutionTargetState = {
 };
 export type AgentModelOption = { id: string; label: string };
 export type AgentModels = { agentId: string; current: string | null; models: AgentModelOption[] };
+export type AgentAnimationSpec = {
+  columns: number;
+  rows: number;
+  animations: {
+    idle: number[];
+    walking: number[];
+    sitting: number[];
+    working: number[];
+    dancing: number[];
+  };
+};
+export type GeneratedAgentAppearance = {
+  attachment: StoredAttachment;
+  provider: string;
+  model: string;
+  prompt: string;
+  animationSpec: AgentAnimationSpec;
+};
+export type CreateAgentInput = {
+  name: string;
+  role: string;
+  instructions: string;
+  model?: string;
+  appearanceAttachmentId: string;
+  appearancePrompt: string;
+  referenceAttachmentIds: string[];
+};
 export type UsageTotals = {
   input: number;
   output: number;
@@ -88,6 +115,27 @@ export type ExtractionFile = {
 };
 export type ExtractionSource = { root: string; available: boolean };
 export type Weekday = "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
+export type CustomExtractor = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  sites: string[];
+  status: "building" | "ready" | "failed";
+  sourceKind: "bundled-folder" | "folder" | "brief" | "brief-and-folder";
+  artifactDir: string;
+  fileCount: number;
+  builderAgentId: "codex";
+  runnerAgentId: "black-noir";
+  buildDetail: string | null;
+  entrypoint: string | null;
+  runInstructions: string;
+  defaults: { destination?: string; travelStart?: string; travelEnd?: string; nights?: string };
+  maxTravelDates: number;
+  createdAt: string;
+  updatedAt: string;
+};
+export type CustomExtractorUpload = { path: string; contentBase64: string };
 export type ExtractionTask = {
   id: string;
   name: string;
@@ -113,6 +161,7 @@ export type ExtractionTask = {
   createdAt: string;
   updatedAt: string;
   nextRunDay: string | null;
+  customExtractorId: string | null;
 };
 export type ExtractionTaskInput = {
   name?: string;
@@ -126,6 +175,7 @@ export type ExtractionTaskInput = {
   weekdays: Weekday[];
   scheduleStart: string;
   scheduleEnd: string;
+  customExtractorId?: string;
 };
 export type ExtractionRunStatus = "running" | "paused" | "waiting" | "stalled" | "stopped" | "complete";
 export type ExtractionRunCommand = "run" | "pause" | "stop";
@@ -575,6 +625,17 @@ export const api = {
       { target, agentId },
     ),
   agents: () => getJson("/agents"),
+  generateAgentAppearance: (payload: {
+    name: string;
+    role: string;
+    description: string;
+    referenceAttachmentIds: string[];
+  }) => postJson<{ ok: true } & GeneratedAgentAppearance>("/agents/appearance/generate", payload),
+  createAgent: (payload: CreateAgentInput) =>
+    postJson<{ ok: true; agent: { agentId: string; name: string }; memory: { id: string; title: string } }>(
+      "/agents",
+      payload,
+    ),
   agentModels: (agentId: string) => getJson<AgentModels>(`/agents/${encodeURIComponent(agentId)}/models`),
   saveAgentModel: (agentId: string, model: string) =>
     putJson<AgentModels>(`/agents/${encodeURIComponent(agentId)}/default-model`, { model }),
@@ -726,6 +787,13 @@ export const api = {
     getJson<{ ok: true; extractions: ExtractionFile[]; source: ExtractionSource }>("/extractions"),
   extractionTasks: () =>
     getJson<{ ok: true; tasks: ExtractionTask[]; supportedSites: string[] }>("/extractions/tasks"),
+  customExtractors: () =>
+    getJson<{ ok: true; extractors: CustomExtractor[] }>("/extractions/custom-extractors"),
+  createCustomExtractor: (input: {
+    name: string;
+    description: string;
+    files: CustomExtractorUpload[];
+  }) => postJson<{ ok: true; extractor: CustomExtractor }>("/extractions/custom-extractors", input),
   createExtractionTask: (input: ExtractionTaskInput) =>
     postJson<{ ok: true; task: ExtractionTask }>("/extractions/tasks", input),
   setExtractionTaskStatus: (id: string, status: ExtractionTask["status"]) =>

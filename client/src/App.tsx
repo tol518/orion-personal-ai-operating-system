@@ -97,7 +97,7 @@ function isPrimarySession(key: string): boolean {
 
 function chatAgentLabel(agentId: string, agents: AgentRoomAgent[]): string {
   if (agentId === "main") return "J.A.R.V.I.S.";
-  if (agentId === "codex") return "Codex Agent";
+  if (agentId === "codex") return "WALL-E";
   const agent = agents.find((entry) => entry.id === agentId);
   return agent?.identity?.name?.trim() || agent?.name?.trim() || agentId;
 }
@@ -250,6 +250,7 @@ export default function App() {
     setServer(st?.server ?? null);
   });
   useStreamEvent("sessions.changed", () => load());
+  useStreamEvent("agents.changed", () => load());
 
   const onlineNodes = nodes.filter((n) => n?.connected).length;
   const gatewayTotals = normalizedTotals(usage?.totals);
@@ -344,6 +345,7 @@ export default function App() {
               setSelectedSessionKey(key);
               navigate("chat");
             }}
+            onAgentCreated={load}
           />
         );
       case "chat":
@@ -419,7 +421,7 @@ export default function App() {
                 icon={<Bot size={16} />}
               />
               <StatTile
-                label="Codex · 7d"
+                label="WALL-E + Codex · 7d"
                 value={fmt(codexUsage.totalTokens)}
                 sub="agent + desktop app · incl. cache"
                 icon={<Code2 size={16} />}
@@ -449,7 +451,7 @@ export default function App() {
                 totals={jarvisUsage}
               />
               <UsagePanel
-                title="OpenClaw Codex agent · 7d"
+                title="OpenClaw WALL-E agent · 7d"
                 subtitle="gateway agent: codex"
                 totals={codexGatewayUsage}
               />
@@ -459,13 +461,13 @@ export default function App() {
                 totals={codexDesktopUsage}
               />
               <UsagePanel
-                title="All Codex usage · 7d"
+                title="WALL-E + Codex usage · 7d"
                 subtitle="OpenClaw agent + desktop app"
                 totals={codexUsage}
               />
               <UsagePanel
                 title="Everything · 7d"
-                subtitle="J.A.R.V.I.S. + all Codex"
+                subtitle="J.A.R.V.I.S. + WALL-E + Codex"
                 totals={combinedUsage}
               />
             </div>
@@ -542,7 +544,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="orion-shell flex h-screen overflow-hidden">
       <Sidebar
         connected={connected}
         active={view}
@@ -553,8 +555,16 @@ export default function App() {
       <main className="flex-1 overflow-y-auto p-4 sm:p-6">
         {/* mobile header + nav */}
         <div className="md:hidden">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="wordmark text-base text-accent text-glow">J.A.R.V.I.S</div>
+          <div className="orion-mobile-header mb-3 flex items-center justify-between">
+            <div className="orion-brand orion-brand--mobile">
+              <span className="orion-brand__emblem" aria-hidden="true">
+                <img src="/brand/orion-identity.png" alt="" />
+              </span>
+              <div>
+                <div className="wordmark text-base text-accent text-glow">ORION</div>
+                <div className="hud-label">OPENCLAW CONTROL</div>
+              </div>
+            </div>
             <span
               className={`h-2.5 w-2.5 rounded-full ${
                 connected ? "animate-core-pulse bg-emerald-400" : "bg-red-500"
@@ -628,7 +638,7 @@ function UsageCompact({
   const rows: Array<[string, string, string]> = [
     ["Selected session", fmt(session.totalTokens), "7d"],
     ["J.A.R.V.I.S.", fmt(jarvis.totalTokens), "OpenClaw"],
-    ["Codex agent", fmt(codex.totalTokens), "Codex"],
+    ["WALL-E + Codex", fmt(codex.totalTokens), "agent + desktop"],
     ["Combined", fmt(combined.totalTokens), "incl. cache"],
   ];
   return (

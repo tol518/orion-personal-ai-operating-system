@@ -224,7 +224,7 @@ export default function HuntingPage() {
     setNotice(null);
     try {
       await persistSearchProfile();
-      setNotice({ kind: "success", text: "Job-search brief saved privately in JARVIS." });
+      setNotice({ kind: "success", text: "Job-search brief saved privately in ORION." });
     } catch (error) {
       setNotice({ kind: "error", text: errorMessage(error) });
     } finally {
@@ -466,7 +466,7 @@ export default function HuntingPage() {
       setContent(response.cv.content);
       setSourcePdfToken(null);
       setDraftUndo(null);
-      setNotice({ kind: "success", text: "Canonical CV saved privately in JARVIS." });
+      setNotice({ kind: "success", text: "Canonical CV saved privately in ORION." });
     } catch (error) {
       setNotice({ kind: "error", text: errorMessage(error) });
     } finally {

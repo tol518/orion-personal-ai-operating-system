@@ -1,16 +1,16 @@
 # Workflow learning
 
-Record a task once, let Jarvis write down how it is done, then have it do the task again.
+Record a task once, let ORION write down how it is done, then have it do the task again.
 
 ```
 screen recording        →  Screenpipe local memory   (raw observation, stays on this Mac)
 Screenpipe memory       →  AI extracts a workflow    (redacted text only, no frames)
-extracted workflow      →  Jarvis memory + store     (the reusable recipe, you approve it first)
-Jarvis agent            →  replays it later          (stopping at every checkpoint you kept)
+extracted workflow      →  ORION memory + store      (the reusable recipe, you approve it first)
+ORION agent             →  replays it later          (stopping at every checkpoint you kept)
 ```
 
 Screenpipe is treated as the **observation layer only**. Everything reusable — the recipe, its
-variables, its safety rules, and its execution history — lives in Jarvis.
+variables, its safety rules, and its execution history — lives in ORION.
 
 ## 0. Licensing — free for this use
 
@@ -30,7 +30,7 @@ If that ever changes, the capture layer is swappable — Screenpipe is confined 
 ## 1. Run Screenpipe locally
 
 Screenpipe is a separate local app. It records continuously into its own SQLite database on this
-machine; Jarvis never starts, stops, or configures it, and never copies its media.
+machine; ORION never starts, stops, or configures it, and never copies its media.
 
 ```bash
 npx screenpipe record
@@ -69,17 +69,17 @@ SCREENPIPE_API_KEY=<output of: npx screenpipe auth token>
 
 The key is required — `/search` answers 401 without it. The Workflows header distinguishes the two
 failures: red for "not answering", amber for "running but not readable" (usually a missing or stale
-key), green only when Jarvis has actually read a row.
+key), green only when ORION has actually read a row.
 
 Restart the BFF and the Workflows page header will show `Screenpipe up`.
 
-### What Jarvis reads, and what it never reads
+### What ORION reads, and what it never reads
 
-Jarvis calls exactly one Screenpipe endpoint, `GET /search`, once per content type per recorded
+ORION calls exactly one Screenpipe endpoint, `GET /search`, once per content type per recorded
 window (`ui`, `ocr`, `input`, and `audio` only if you ticked narration for that recording):
 
 - **`include_frames` is never sent, and `/frames` is never called.** Screenshot and video bytes stay
-  inside Screenpipe's database. Only text ever reaches Jarvis.
+  inside Screenpipe's database. Only text ever reaches ORION.
 - **Audio is opt-in per recording.** The "read my spoken narration" checkbox is off by default.
 - **Credential-shaped text is masked before it is stored**, in
   [`observation-window.js`](../server/workflows/observation-window.js): password/token/OTP/card-shaped
@@ -89,7 +89,7 @@ window (`ui`, `ocr`, `input`, and `audio` only if you ticked narration for that 
   LastPass, Dashlane, Keeper, Keychain Access, and authenticator apps are dropped by window name.
   Add your own with `JARVIS_WORKFLOW_EXCLUDE_APPS=Messages,Signal`.
 - **Nothing extra is persisted.** The raw capture is discarded after the redacted digest is built;
-  Jarvis does not keep a second copy of your recording.
+  ORION does not keep a second copy of your recording.
 
 The model that extracts the workflow is the one this app already uses for Hunting (a Codex-routed
 `openai/gpt-5.6-terra` turn over your existing OAuth account). It receives the redacted text
@@ -104,11 +104,11 @@ Open **Workflows** in the sidebar.
    that is not running.
 2. Do the task once, at a normal pace. Backtracking is fine; the extractor is told to drop mistakes,
    pauses, notifications, and unrelated tabs.
-3. Press **Stop**. Jarvis reads the window back from Screenpipe and shows what it captured: how many
+3. Press **Stop**. ORION reads the window back from Screenpipe and shows what it captured: how many
    screen segments, which apps, how much was redacted or excluded.
 4. Press **Extract workflow**. One model turn converts the timeline into a `LearnedWorkflow`.
 5. **Review the draft.** This is not a formality — read every step, fix the anchors and values, and
-   check which steps are gated. Nothing is stored until you press **Save to Jarvis memory**.
+   check which steps are gated. Nothing is stored until you press **Save to ORION memory**.
 
 On save, two things happen:
 
@@ -201,7 +201,7 @@ which is itself a useful check that failures are reported honestly).
 
 ## Known limits
 
-- **A learning session is a bookmark, not a recorder.** Screenpipe records continuously; Jarvis marks
+- **A learning session is a bookmark, not a recorder.** Screenpipe records continuously; ORION marks
   a start and end and reads that window back. If Screenpipe was not running, the window is empty —
   which is why starting a session health-checks it first.
 - **The `/health` response body is undocumented**, so nothing reads its fields. A 200 means the

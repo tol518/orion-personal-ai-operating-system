@@ -126,7 +126,7 @@ export default function WorkflowsPage() {
       setSelectedId(workflow.id);
       setNotice(
         memory.saved
-          ? `Saved. The recipe is now a page in Jarvis memory, so the agent can find it in chat.`
+          ? `Saved. The recipe is now a page in ORION memory, so the agent can find it in chat.`
           : `Saved to the workflow store. The Obsidian memory note could not be written: ${memory.error}`,
       );
     });
@@ -142,7 +142,7 @@ export default function WorkflowsPage() {
             Workflows
           </h1>
           <p className="mt-2 font-mono text-[0.72rem] text-[#7e91a5]">
-            Record a task once · Screenpipe observes · a model writes the recipe · you approve it · Jarvis replays it
+            Record a task once · Screenpipe observes · a model writes the recipe · you approve it · J.A.R.V.I.S. replays it
           </p>
         </div>
         <div className="flex items-center gap-2 font-mono text-[0.68rem] text-[#a9bac9]">
@@ -190,7 +190,7 @@ export default function WorkflowsPage() {
       )}
       {screenpipe?.running && !screenpipe.readable && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 font-mono text-xs text-amber-200">
-          Screenpipe is recording but will not let Jarvis read it: {screenpipe.detail}
+          Screenpipe is recording but will not let J.A.R.V.I.S. read it: {screenpipe.detail}
         </div>
       )}
 
@@ -229,7 +229,7 @@ export default function WorkflowsPage() {
         <HoloPanel title="Saved workflows" right={<span className="font-mono text-xs text-accent">{workflows.length}</span>}>
           {workflows.length === 0 ? (
             <p className="font-mono text-xs text-gray-500">
-              Nothing learned yet. Record a task above and Jarvis will write its first recipe.
+              Nothing learned yet. Record a task above and J.A.R.V.I.S. will write its first recipe.
             </p>
           ) : (
             <ul className="space-y-2">
@@ -860,8 +860,8 @@ function RunPanel({ workflow, onDelete }: { workflow: StoredWorkflow; onDelete: 
 
         <p className="font-mono text-[0.58rem] leading-relaxed text-gray-600">
           {workflow.memoryId
-            ? "This recipe is a page in Jarvis memory, so asking in chat — “run the invoice workflow for Client X” — finds it."
-            : "This workflow is not in Jarvis memory yet; re-save it to write the note."}
+            ? "This recipe is a page in ORION memory, so asking in chat — “run the invoice workflow for Client X” — finds it."
+            : "This workflow is not in ORION memory yet; re-save it to write the note."}
         </p>
       </div>
     </HoloPanel>

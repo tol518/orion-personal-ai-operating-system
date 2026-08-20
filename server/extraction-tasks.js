@@ -126,7 +126,7 @@ export function nextRunDay(task, now = new Date()) {
   return null;
 }
 
-export function normalizeTaskInput(input = {}) {
+export function normalizeTaskInput(input = {}, { maxTravelDates = MAX_TRAVEL_DATES } = {}) {
   const agentId = String(input.agentId ?? "").trim();
   if (!agentId) reject("Choose an agent to run the extraction");
 
@@ -149,8 +149,8 @@ export function normalizeTaskInput(input = {}) {
   if (dateCount === 0) {
     reject("No departure dates match the selected departure days in that travel range");
   }
-  if (dateCount > MAX_TRAVEL_DATES) {
-    reject(`Travel range covers ${dateCount} departures; keep it to ${MAX_TRAVEL_DATES} or fewer`);
+  if (dateCount > maxTravelDates) {
+    reject(`Travel range covers ${dateCount} departures; keep it to ${maxTravelDates} or fewer`);
   }
 
   const nights = parseNights(input.nights);
@@ -180,6 +180,7 @@ export function normalizeTaskInput(input = {}) {
     weekdays,
     scheduleStart,
     scheduleEnd,
+    customExtractorId: String(input.customExtractorId ?? "").trim() || null,
   };
 }
 
@@ -206,6 +207,7 @@ function rowToTask(row) {
     runCount: row.run_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    customExtractorId: row.custom_extractor_id ?? null,
   };
 }
 
@@ -242,6 +244,7 @@ export class ExtractionTaskStore {
     `);
     this.#addColumnIfMissing("running_since", "TEXT");
     this.#addColumnIfMissing("departure_days_json", "TEXT");
+    this.#addColumnIfMissing("custom_extractor_id", "TEXT");
   }
 
   // CREATE TABLE IF NOT EXISTS is a no-op on a table that already exists, so a
@@ -278,16 +281,17 @@ export class ExtractionTaskStore {
     return row ? rowToTask(row) : null;
   }
 
-  create(input) {
-    const spec = normalizeTaskInput(input);
+  create(input, options) {
+    const spec = normalizeTaskInput(input, options);
     const now = new Date().toISOString();
     const id = randomUUID();
     this.database
       .prepare(
         `INSERT INTO extraction_tasks
            (id, name, agent_id, destination, sites_json, travel_start, travel_end, departure_days_json,
-            nights_json, weekdays_json, schedule_start, schedule_end, status, run_count, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)`,
+            nights_json, weekdays_json, schedule_start, schedule_end, custom_extractor_id,
+            status, run_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)`,
       )
       .run(
         id,
@@ -302,6 +306,7 @@ export class ExtractionTaskStore {
         JSON.stringify(spec.weekdays),
         spec.scheduleStart,
         spec.scheduleEnd,
+        spec.customExtractorId,
         now,
         now,
       );

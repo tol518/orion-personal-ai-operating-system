@@ -4,6 +4,8 @@ import { ATTACHMENT_ACCEPT, useAttachmentDrop } from "../hooks/useAttachmentDrop
 import { api, type StoredAttachment } from "../lib/api";
 import type { Memory, MemoryType } from "../lib/memory-types";
 
+const EXTRACTION_MEMORY_TAG = "extraction-related";
+
 export default function MemoryEditor({
   memory,
   creating,
@@ -110,6 +112,17 @@ export default function MemoryEditor({
     );
   }
 
+  function toggleExtractionLabel() {
+    const nextTags = tags.split(",").map((tag) => tag.trim()).filter(Boolean);
+    const hasLabel = nextTags.some((tag) => tag.toLowerCase() === EXTRACTION_MEMORY_TAG);
+    setTags(
+      (hasLabel
+        ? nextTags.filter((tag) => tag.toLowerCase() !== EXTRACTION_MEMORY_TAG)
+        : [...nextTags, EXTRACTION_MEMORY_TAG]
+      ).join(", "),
+    );
+  }
+
   const { isDragging, dropProps, pasteProps } = useAttachmentDrop({
     onFiles: addFiles,
     disabled: (!memory && !creating) || uploading || attachments.length >= 5,
@@ -201,6 +214,18 @@ export default function MemoryEditor({
           onChange={(event) => setTags(event.target.value)}
           placeholder="person, preference, decision"
         />
+      </label>
+
+      <label className="memory-extraction-label">
+        <input
+          type="checkbox"
+          checked={tags.split(",").some((tag) => tag.trim().toLowerCase() === EXTRACTION_MEMORY_TAG)}
+          onChange={toggleExtractionLabel}
+        />
+        <span>
+          <strong>Extraction related</strong>
+          <small>Readable by Black Noir</small>
+        </span>
       </label>
 
       <div className="memory-connections">

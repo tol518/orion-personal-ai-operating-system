@@ -59,6 +59,7 @@ const RELATION_TYPES = new Set([
   "same_project",
   "same_entity",
   "temporal",
+  "nearest_neighbor",
 ]);
 const MEMORY_TYPES = new Set(["general", "agent_instruction", "project", "shared_lesson"]);
 const AGENT_MANAGED_MEMORY_TYPES = new Set(["agent_instruction", "project", "shared_lesson"]);

@@ -25,6 +25,18 @@ function approvedPairKeys(memories) {
   return keys;
 }
 
+function connectedNodeIds(memories) {
+  const ids = new Set();
+  for (const memory of memories) {
+    for (const connection of memory.connections ?? []) {
+      if (connection.archived) continue;
+      ids.add(connection.source);
+      ids.add(connection.target);
+    }
+  }
+  return ids;
+}
+
 export class NeuralConnectionEngine {
   constructor({
     memories,
@@ -112,12 +124,21 @@ export class NeuralConnectionEngine {
       }
       this.neuralStore.removeMissingEmbeddings(memories.map((memory) => memory.id));
       const consideredPairs = approvedPairKeys(memories);
-      for (const entry of changed) {
+      const connectedIds = connectedNodeIds(memories);
+      const isolatedIds = new Set(
+        memories.length > 1
+          ? memories.filter((memory) => !connectedIds.has(memory.id)).map((memory) => memory.id)
+          : [],
+      );
+      const workIds = [...new Set([...isolatedIds, ...changed.map((entry) => entry.memoryId)])];
+      for (const memoryId of workIds) {
         created += await this.#discoverForMemory(
-          entry.memoryId,
+          memoryId,
           memories,
           embeddings,
           consideredPairs,
+          isolatedIds.has(memoryId) && !connectedIds.has(memoryId),
+          connectedIds,
         );
       }
       await this.#decayIfDue(memories);
@@ -138,7 +159,14 @@ export class NeuralConnectionEngine {
     }
   }
 
-  async #discoverForMemory(sourceId, memories, embeddings, consideredPairs) {
+  async #discoverForMemory(
+    sourceId,
+    memories,
+    embeddings,
+    consideredPairs,
+    ensureConnection = false,
+    connectedIds = new Set(),
+  ) {
     const byId = new Map(memories.map((memory) => [memory.id, memory]));
     const source = byId.get(sourceId);
     if (!source) return 0;
@@ -152,7 +180,7 @@ export class NeuralConnectionEngine {
     const remaining = Math.max(0, CONNECTION_THRESHOLDS.maxAutomaticPerNode - automaticDegree);
     if (!remaining) return 0;
 
-    const scored = this.retrieval.find(sourceId, embeddings, memories).flatMap((candidate) => {
+    const allScored = this.retrieval.find(sourceId, embeddings, memories).flatMap((candidate) => {
       const memory = byId.get(candidate.id);
       if (!memory) return [];
       const pair = [sourceId, memory.id].sort().join("::");
@@ -164,8 +192,10 @@ export class NeuralConnectionEngine {
         coRetrievalCount: this.neuralStore.coRetrievalCount(sourceId, memory.id),
       });
       return [{ memory, ...result }];
-    }).filter(({ score }) => score >= CONNECTION_THRESHOLDS.strongestCandidate)
-      .sort((left, right) => right.score - left.score)
+    }).sort((left, right) => right.score - left.score);
+    const scored = (ensureConnection
+      ? allScored
+      : allScored.filter(({ score }) => score >= CONNECTION_THRESHOLDS.strongestCandidate))
       .slice(0, Math.min(remaining, CONNECTION_THRESHOLDS.maxLlmCandidates));
 
     // A relationship pair is classified once per reconciliation. This avoids reverse duplicate
@@ -217,6 +247,8 @@ export class NeuralConnectionEngine {
       };
       if (autoConnect) {
         await this.memories.addRelationship(source.id, candidate.memory.id, relationship);
+        connectedIds.add(source.id);
+        connectedIds.add(candidate.memory.id);
         const pending = this.proposalStore.findByFingerprint("relationship", fingerprint);
         if (pending?.status === "pending") this.proposalStore.resolve(pending.id, "approved");
         created += 1;
@@ -228,6 +260,33 @@ export class NeuralConnectionEngine {
         "neural-memory-engine",
       );
       if (result.created) created += 1;
+    }
+    if (ensureConnection && created === 0 && allScored.length > 0) {
+      const candidate = allScored[0];
+      const semanticSimilarity = candidate.factors.semanticSimilarity;
+      const relationship = {
+        fingerprint: relationshipFingerprint(
+          source.id,
+          candidate.memory.id,
+          "nearest_neighbor",
+          memoryContentHash(source),
+        ),
+        fromId: source.id,
+        toId: candidate.memory.id,
+        label: "nearest_neighbor",
+        relationType: "nearest_neighbor",
+        weight: Number(Math.max(CONNECTION_THRESHOLDS.nearestNeighborFloor, candidate.score).toFixed(4)),
+        confidence: Number(Math.max(0.2, semanticSimilarity).toFixed(4)),
+        creationSource: "neural-nearest-neighbor",
+        activationCount: 0,
+        lastActivatedAt: null,
+        reason: "Strongest available semantic neighbor; retained so this memory stays reachable in the graph.",
+        scoreFactors: candidate.factors,
+      };
+      await this.memories.addRelationship(source.id, candidate.memory.id, relationship);
+      connectedIds.add(source.id);
+      connectedIds.add(candidate.memory.id);
+      created += 1;
     }
     return created;
   }

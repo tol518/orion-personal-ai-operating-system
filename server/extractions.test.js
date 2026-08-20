@@ -144,11 +144,11 @@ describe("ExtractionCatalog.runs", () => {
 
   test("counts extracted and remaining dates and names the current one", () => {
     seedRun(
-      "antalya-nk_1400",
+      "antalya-provider-a_1400",
       { platform: "ProviderA", destination: "Antalya", nights: 7, dates: DATES, startedAt: STARTED, pid: process.pid },
       DATES.slice(0, 2),
     );
-    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "antalya-nk_1400");
+    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "antalya-provider-a_1400");
     assert.equal(run.status, "running");
     assert.equal(run.totalDates, 4);
     assert.equal(run.extractedDates, 2);
@@ -160,8 +160,8 @@ describe("ExtractionCatalog.runs", () => {
   });
 
   test("a live pid with no dates done yet reports no eta", () => {
-    seedRun("bodrum-nk_1400", { dates: DATES, startedAt: STARTED, pid: process.pid }, []);
-    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "bodrum-nk_1400");
+    seedRun("bodrum-provider-a_1400", { dates: DATES, startedAt: STARTED, pid: process.pid }, []);
+    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "bodrum-provider-a_1400");
     assert.equal(run.extractedDates, 0);
     assert.equal(run.currentDate, "2026-09-15");
     assert.equal(run.etaMs, null);
@@ -170,16 +170,16 @@ describe("ExtractionCatalog.runs", () => {
   test("an unknown pid still writing files is alive, not stalled", () => {
     // The sandbox case: an agent records a pid from its own namespace, so the
     // pid is invisible here even though the run is plainly still working.
-    seedRun("sandbox-nk_1400", { dates: DATES, startedAt: STARTED, pid: 999_999 }, DATES.slice(0, 1));
-    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "sandbox-nk_1400");
+    seedRun("sandbox-provider-a_1400", { dates: DATES, startedAt: STARTED, pid: 999_999 }, DATES.slice(0, 1));
+    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "sandbox-provider-a_1400");
     assert.equal(run.status, "running");
     assert.equal(run.controllable, true, "a live run must stay pausable and stoppable");
   });
 
   test("an unknown pid that has stopped writing is stalled", () => {
-    seedRun("izmir-nk_1400", { dates: DATES, startedAt: STARTED, pid: 999_999 }, DATES.slice(0, 1));
-    ageSession("izmir-nk_1400", 10);
-    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "izmir-nk_1400");
+    seedRun("izmir-provider-a_1400", { dates: DATES, startedAt: STARTED, pid: 999_999 }, DATES.slice(0, 1));
+    ageSession("izmir-provider-a_1400", 10);
+    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "izmir-provider-a_1400");
     assert.equal(run.status, "stalled");
     assert.equal(run.remainingDates, 3);
     assert.equal(run.controllable, false);
@@ -189,8 +189,8 @@ describe("ExtractionCatalog.runs", () => {
 
   test("a run that has just finished is not controllable, however recent its writes", () => {
     // It still looks alive by file recency, but there is nothing left to command.
-    seedRun("justdone-nk_1400", { dates: DATES, startedAt: STARTED, pid: 999_999 }, DATES);
-    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "justdone-nk_1400");
+    seedRun("justdone-provider-a_1400", { dates: DATES, startedAt: STARTED, pid: 999_999 }, DATES);
+    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "justdone-provider-a_1400");
     assert.equal(run.status, "complete");
     assert.equal(run.controllable, false);
   });
@@ -211,23 +211,23 @@ describe("ExtractionCatalog.runs", () => {
   test("a fresh heartbeat keeps a quiet run alive when nothing is being written", () => {
     // Paused and waiting runs produce no files, so only the heartbeat vouches.
     seedRun(
-      "held-nk_1400",
+      "held-provider-a_1400",
       { dates: DATES, startedAt: STARTED, pid: 999_999, state: "paused", heartbeatAt: new Date(NOW - 5000).toISOString() },
       [],
     );
-    ageSession("held-nk_1400", 10);
-    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "held-nk_1400");
+    ageSession("held-provider-a_1400", 10);
+    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "held-provider-a_1400");
     assert.equal(run.status, "paused");
     assert.equal(run.controllable, true);
   });
 
   test("finishedAt freezes elapsed and clears the eta", () => {
     seedRun(
-      "dalaman-nk_1400",
+      "dalaman-provider-a_1400",
       { dates: DATES, startedAt: STARTED, finishedAt: "2026-08-06T14:05:00.000Z", pid: 999_999 },
       DATES,
     );
-    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "dalaman-nk_1400");
+    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "dalaman-provider-a_1400");
     assert.equal(run.status, "complete");
     assert.equal(run.remainingDates, 0);
     assert.equal(run.elapsedMs, 5 * 60 * 1000);
@@ -235,8 +235,8 @@ describe("ExtractionCatalog.runs", () => {
   });
 
   test("every date extracted is complete even without a finishedAt stamp", () => {
-    seedRun("kos-nk_1400", { dates: DATES, startedAt: STARTED, pid: process.pid }, DATES);
-    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "kos-nk_1400");
+    seedRun("kos-provider-a_1400", { dates: DATES, startedAt: STARTED, pid: process.pid }, DATES);
+    const run = catalog.runs({ now: NOW }).find((entry) => entry.session === "kos-provider-a_1400");
     assert.equal(run.status, "complete");
   });
 
@@ -319,7 +319,7 @@ describe("ExtractionCatalog control", () => {
 
   before(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-control-"));
-    sessionDir = path.join(root, "Extraction_Live_Workspace", "2026-08-06", "antalya-nk_1400");
+    sessionDir = path.join(root, "Extraction_Live_Workspace", "2026-08-06", "antalya-provider-a_1400");
     fs.mkdirSync(sessionDir, { recursive: true });
     fs.writeFileSync(
       path.join(sessionDir, RUN_FILE),

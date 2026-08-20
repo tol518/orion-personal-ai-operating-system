@@ -24,7 +24,7 @@ const MemoryGraph = lazy(() => import("./MemoryGraph"));
 
 type MobileTab = "list" | "graph" | "edit";
 
-const FILTERS = ["All", "Shared Lessons", "Agent Instructions", "Projects", "People", "Preferences", "Decisions"] as const;
+const FILTERS = ["All", "Extraction", "Shared Lessons", "Agent Instructions", "Projects", "People", "Preferences", "Decisions"] as const;
 
 export default function MemoryPage() {
   const [memories, setMemories] = useState<Memory[]>([]);
@@ -83,6 +83,7 @@ export default function MemoryPage() {
     return memories.filter((memory) => {
       const matchesSearch = !query || `${memory.title}\n${memory.body}\n${memory.tags.join(" ")}`.toLowerCase().includes(query);
       if (!matchesSearch || filter === "All") return matchesSearch;
+      if (filter === "Extraction") return memory.tags.some((tag) => tag.toLowerCase() === "extraction-related");
       if (filter === "Shared Lessons") return memory.memoryType === "shared_lesson";
       if (filter === "Agent Instructions") return memory.memoryType === "agent_instruction";
       if (filter === "Projects") return memory.memoryType === "project";
@@ -92,11 +93,16 @@ export default function MemoryPage() {
     });
   }, [deferredSearch, filter, memories]);
 
-  function selectMemory(id: string) {
+  function selectMemory(id: string | null) {
     setCreating(false);
     setSelectedId(id);
-    setMobileTab("edit");
-    window.history.replaceState(null, "", `#memory?id=${encodeURIComponent(id)}`);
+    // Deselecting is a graph gesture: stay where we are rather than pushing the editor into view.
+    if (id) {
+      setMobileTab("edit");
+      window.history.replaceState(null, "", `#memory?id=${encodeURIComponent(id)}`);
+      return;
+    }
+    window.history.replaceState(null, "", "#memory");
   }
 
   function startCreate() {

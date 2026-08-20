@@ -125,6 +125,22 @@ describe("normalizeTaskInput", () => {
     );
   });
 
+  test("a proven custom extractor can declare a larger bounded travel range", () => {
+    const spec = normalizeTaskInput(
+      {
+        ...VALID,
+        agentId: "black-noir",
+        sites: ["ProviderA", "ProviderC"],
+        travelStart: "2027-04-01",
+        travelEnd: "2027-10-31",
+        customExtractorId: "provider-a-provider-c",
+      },
+      { maxTravelDates: 240 },
+    );
+    assert.equal(travelDates(spec).length, 214);
+    assert.equal(spec.customExtractorId, "provider-a-provider-c");
+  });
+
   test("the size limit counts what will actually be searched, after filtering", () => {
     // 1 Sep -> 31 Dec is 122 dates, over the cap; Tue/Sat departures is 35.
     const tooBig = { ...VALID, travelStart: "2026-09-01", travelEnd: "2026-12-31" };
@@ -255,6 +271,41 @@ describe("buildTaskPrompt", () => {
     assert.match(paired, /comparison CSV/);
     assert.match(paired, /Sites: ProviderA and ProviderC/);
   });
+
+  test("custom extractor work is execution-only for Black Noir", () => {
+    const task = {
+      ...normalizeTaskInput({ ...VALID, agentId: "black-noir", customExtractorId: "custom-1" }),
+      id: "t-custom",
+    };
+    const prompt = buildTaskPrompt(task, "2026-08-17", {
+      name: "ProviderA + ProviderC",
+      slug: "provider-a-provider-c",
+      artifactDir: "/workspace/Custom_Extractors/provider-a-provider-c",
+      entrypoint: "source/run-direct-api.js",
+      runInstructions: "Run the supplied package.",
+    });
+    assert.match(prompt, /Execution owner: Black Noir \(built by Codex\)/);
+    assert.match(prompt, /Do not redesign or modify the reusable package/);
+    assert.match(prompt, /Active entrypoint: \/workspace\/Custom_Extractors\/provider-a-provider-c\/source\/run-direct-api\.js/);
+    assert.match(prompt, /Write all output inside the new provider-a-provider-c-\* run folder/);
+    assert.doesNotMatch(prompt, /one session folder per site/);
+    assert.match(prompt, /starts with provider-a-provider-c-/);
+  });
+
+  test("a custom package keeps every declared site with Black Noir", () => {
+    const task = {
+      ...normalizeTaskInput({ ...VALID, agentId: "black-noir", sites: ["ProviderB"] }),
+      id: "t-custom-owned",
+    };
+    const prompt = buildTaskPrompt(task, "2026-08-17", {
+      name: "Custom ProviderB",
+      slug: "custom-provider-b",
+      artifactDir: "/workspace/Custom_Extractors/custom-provider-b",
+      runInstructions: "Run the supplied package.",
+    });
+    assert.match(prompt, /Sites: ProviderB/);
+    assert.doesNotMatch(prompt, /Jarvis extracts ProviderB itself/);
+  });
 });
 
 describe("unified CSV schema", () => {
@@ -323,6 +374,11 @@ describe("ExtractionTaskStore", () => {
     assert.equal(created.runCount, 0);
     assert.deepEqual(store.get(created.id).weekdays, ["tue", "fri", "sat"]);
     assert.equal(store.list().length, 1);
+  });
+
+  test("round-trips the custom extractor reference", () => {
+    const created = store.create({ ...VALID, agentId: "black-noir", customExtractorId: "custom-1" });
+    assert.equal(store.get(created.id).customExtractorId, "custom-1");
   });
 
   test("claiming a day is atomic, so a task cannot fire twice on one day", () => {

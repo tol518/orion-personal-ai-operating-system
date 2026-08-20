@@ -606,7 +606,7 @@ function feedState(
 
 function unsupportedMessage(node: ScreenNode) {
   if (node.screenBridgeConfigured && !node.screenBridgeOnline) {
-    return "The Windows screen bridge is offline. Sign in to Windows and start the Jarvis Screen Bridge task.";
+    return "The Windows screen bridge is offline. Sign in to Windows and start the ORION Screen Bridge task.";
   }
   const platform = `${node.platform ?? ""} ${node.deviceFamily ?? ""} ${node.displayName ?? ""}`.toLowerCase();
   if (platform.includes("win") && platform.includes("linux")) {

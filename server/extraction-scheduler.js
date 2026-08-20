@@ -33,7 +33,7 @@ const WEEKDAY_LABELS = {
   sat: "Saturday",
 };
 
-export function buildTaskPrompt(task, today = localDayKey(new Date())) {
+export function buildTaskPrompt(task, today = localDayKey(new Date()), customExtractor = null) {
   const dates = travelDates(task);
   const nights = formatNights(task.nights);
   // Departures may be restricted to the weekdays flights actually operate on;
@@ -42,7 +42,9 @@ export function buildTaskPrompt(task, today = localDayKey(new Date())) {
     task.departureDays?.length > 0
       ? `${task.departureDays.map((d) => WEEKDAY_LABELS[d]).join("/")} departures only`
       : "every date in range";
-  const { agentSites, bffSites } = splitSites(task.sites);
+  const { agentSites, bffSites } = customExtractor
+    ? { agentSites: task.sites, bffSites: [] }
+    : splitSites(task.sites);
   const sites = agentSites.join(" and ");
   // Only the agent's own sites are named as work; a site Jarvis extracts itself
   // is mentioned as context so the agent does not go looking for it, and does
@@ -55,6 +57,29 @@ export function buildTaskPrompt(task, today = localDayKey(new Date())) {
     task.sites.length > 1
       ? `\nAfter both sites are extracted, produce the comparison CSV per the Comparison Protocols, matching hotels with the Name Match Protocols.`
       : "";
+  const customContract = customExtractor
+    ? [
+        `Custom extractor: ${customExtractor.name}`,
+        `Ready package: ${customExtractor.artifactDir}`,
+        `Execution owner: Black Noir (built by Codex).`,
+        customExtractor.entrypoint
+          ? `Active entrypoint: ${path.join(customExtractor.artifactDir, customExtractor.entrypoint)}`
+          : "",
+        `Copy the ready package into a fresh run folder whose name starts with ${customExtractor.slug}- under`,
+        `~/.openclaw/workspace/Extraction_Live_Workspace/${today}/, then execute it there.`,
+        "Do not redesign or modify the reusable package. If it is broken, report the failure for Codex to repair.",
+        customExtractor.runInstructions ? `Package run contract: ${customExtractor.runInstructions}` : "",
+      ]
+    : [];
+  const outputContract = customExtractor
+      ? [
+        `Write all output inside the new ${customExtractor.slug}-* run folder.`,
+        "Follow the package run contract for output filenames and produce per-site data plus the combined comparison output.",
+      ]
+    : [
+        `Write one session folder per site under ~/.openclaw/workspace/Extraction_Live_Workspace/${today}/`,
+        `with one results-<date>.csv per departure date (${dates.length} of them) and a combined CSV at the end.`,
+      ];
 
   // Named explicitly rather than left to the agent's judgement: a scheduled run
   // has nobody watching it, so the parameters must not drift between firings.
@@ -67,6 +92,7 @@ export function buildTaskPrompt(task, today = localDayKey(new Date())) {
       dates.length === 1 ? "date" : "dates"
     }, ${departureRule})`,
     `Nights: ${nights}`,
+    ...customContract,
     "",
     "Follow the extraction protocols in protocols/ for each site.",
     "Use lib/extraction-runtime.js for the run controller so this run reports progress",
@@ -76,8 +102,7 @@ export function buildTaskPrompt(task, today = localDayKey(new Date())) {
     // Absolute, because a bare "Extraction_Live_Workspace/..." was resolved
     // against $HOME and the output landed outside the shared workspace, where
     // nothing could see it.
-    `Write one session folder per site under ~/.openclaw/workspace/Extraction_Live_Workspace/${today}/`,
-    `with one results-<date>.csv per departure date (${dates.length} of them) and a combined CSV at the end.`,
+    ...outputContract,
     comparison,
     "",
     "Reply with one line per site: the absolute session folder path, the number of",
@@ -101,6 +126,7 @@ export class ExtractionScheduler {
     timeoutMs = DISPATCH_TIMEOUT_MS,
     now = () => new Date(),
     dispatch,
+    customExtractors = null,
   }) {
     this.store = store;
     this.gateway = gateway;
@@ -110,6 +136,7 @@ export class ExtractionScheduler {
     this.timeoutMs = timeoutMs;
     this.now = now;
     this.dispatch = dispatch ?? ((task) => this.#runTask(task));
+    this.customExtractors = customExtractors;
     this.inFlight = new Set();
     this.timer = null;
   }
@@ -177,6 +204,28 @@ export class ExtractionScheduler {
     });
   }
 
+  #verifyCustomOutput(extractor, today) {
+    if (!this.workspaceRoot) return [];
+    const dayDir = path.join(this.workspaceRoot, "Extraction_Live_Workspace", today);
+    let sessions = [];
+    try {
+      sessions = fs
+        .readdirSync(dayDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith(`${extractor.slug}-`))
+        .map((entry) => entry.name);
+    } catch {
+      // Reported below as a missing custom-extractor run folder.
+    }
+    if (sessions.length === 0) return [`⚠️ ${extractor.name}: no ${extractor.slug}-* run folder in ${today}`];
+    const csvCount = sessions.reduce(
+      (sum, session) => sum + countCsvFiles(path.join(dayDir, session)),
+      0,
+    );
+    return csvCount > 0
+      ? [`${extractor.name}: ${sessions.at(-1)} — ${csvCount} CSV file(s) on disk`]
+      : [`⚠️ ${extractor.name}: run folder exists but contains no CSV output`];
+  }
+
   /** Test seam for the private verifier above. */
   verifyAgentOutputForTest(sites, today) {
     return this.#verifyAgentOutput(sites, today);
@@ -223,7 +272,15 @@ export class ExtractionScheduler {
    * extracts the ones only it can reach. Both run, and the reply records each.
    */
   async #runTask(task) {
-    const { agentSites, bffSites } = splitSites(task.sites);
+    const customExtractor = task.customExtractorId ? this.customExtractors?.get(task.customExtractorId) : null;
+    if (task.customExtractorId && customExtractor?.status !== "ready") {
+      throw new Error("The selected custom extractor is no longer ready");
+    }
+    // A custom package owns every site in its manifest. The standard BFF split
+    // applies only to built-in extraction paths, never to Black Noir's package.
+    const { agentSites, bffSites } = customExtractor
+      ? { agentSites: task.sites, bffSites: [] }
+      : splitSites(task.sites);
     const notes = [];
 
     if (bffSites.includes("ProviderB")) {
@@ -270,7 +327,7 @@ export class ExtractionScheduler {
         gateway: this.gateway,
         sessionKey: this.sessionKey(task),
         agentId: task.agentId,
-        message: buildTaskPrompt(task, today),
+        message: buildTaskPrompt(task, today, customExtractor),
         timeoutMs: this.timeoutMs,
         label: `extraction-task-${task.id}`,
       });
@@ -278,7 +335,11 @@ export class ExtractionScheduler {
       // Trust but verify: an agent has reported a session folder and a row
       // count for work that never reached the workspace at all. Only what is
       // on disk counts.
-      notes.push(...this.#verifyAgentOutput(agentSites, today));
+      notes.push(
+        ...(customExtractor
+          ? this.#verifyCustomOutput(customExtractor, today)
+          : this.#verifyAgentOutput(agentSites, today)),
+      );
     }
 
     return notes.filter(Boolean).join("\n");
@@ -308,4 +369,17 @@ function localDayKey(date) {
 function hhmm(date) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${pad(date.getHours())}${pad(date.getMinutes())}`;
+}
+
+function countCsvFiles(root) {
+  let count = 0;
+  try {
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      const target = path.join(root, entry.name);
+      count += entry.isDirectory() ? countCsvFiles(target) : entry.name.toLowerCase().endsWith(".csv") ? 1 : 0;
+    }
+  } catch {
+    return count;
+  }
+  return count;
 }

@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import {
   api,
+  type CustomExtractor,
+  type CustomExtractorUpload,
   type ExtractionDetail,
   type ExtractionFile,
   type ExtractionRun,
@@ -29,6 +31,7 @@ import {
 import type { AgentRoomAgent } from "./AgentRoom";
 import HoloPanel from "./HoloPanel";
 import ExtractionTaskForm, { weekdaySummary } from "./ExtractionTaskForm";
+import CustomExtractorSection from "./CustomExtractorSection";
 
 // While a run is live the counters only move once per date, but elapsed ticks
 // every second, so the indicator refreshes on a short interval.
@@ -341,6 +344,7 @@ function TaskCard({
       )}
       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[0.58rem] text-gray-500">
         <span className="text-sky-300">{agentLabel}</span>
+        {task.customExtractorId && <span className="text-fuchsia-300">custom extractor</span>}
         <span>{task.sites.join(" vs ")}</span>
         <span>
           travel {fmtDay(task.travelStart)}–{fmtDay(task.travelEnd)}
@@ -407,6 +411,9 @@ export default function ExtractionPage({ agents = [] }: { agents?: AgentRoomAgen
   const [files, setFiles] = useState<ExtractionFile[]>([]);
   const [tasks, setTasks] = useState<ExtractionTask[]>([]);
   const [taskBusy, setTaskBusy] = useState(false);
+  const [customExtractors, setCustomExtractors] = useState<CustomExtractor[]>([]);
+  const [customExtractorBusy, setCustomExtractorBusy] = useState(false);
+  const [selectedCustomExtractor, setSelectedCustomExtractor] = useState<CustomExtractor | null>(null);
   const [runs, setRuns] = useState<ExtractionRun[]>([]);
   const [defaultSchedule, setDefaultSchedule] = useState<ExtractionSchedule>(ANYTIME);
   const [busyRunId, setBusyRunId] = useState<string | null>(null);
@@ -441,10 +448,34 @@ export default function ExtractionPage({ agents = [] }: { agents?: AgentRoomAgen
     }
   }, []);
 
+  const loadCustomExtractors = useCallback(async () => {
+    try {
+      const res = await api.customExtractors();
+      setCustomExtractors(res.extractors);
+    } catch (err) {
+      setError(String((err as Error)?.message ?? err));
+    }
+  }, []);
+
   useEffect(() => {
     load();
     loadTasks();
-  }, [load, loadTasks]);
+    loadCustomExtractors();
+  }, [load, loadCustomExtractors, loadTasks]);
+
+  const createCustomExtractor = useCallback(
+    async (input: { name: string; description: string; files: CustomExtractorUpload[] }) => {
+      setCustomExtractorBusy(true);
+      try {
+        await api.createCustomExtractor(input);
+        await loadCustomExtractors();
+        setError(null);
+      } finally {
+        setCustomExtractorBusy(false);
+      }
+    },
+    [loadCustomExtractors],
+  );
 
   const createTask = useCallback(
     async (input: ExtractionTaskInput) => {
@@ -503,6 +534,7 @@ export default function ExtractionPage({ agents = [] }: { agents?: AgentRoomAgen
         // Tasks poll alongside runs so "agent working" and the reply that ends
         // it appear without the user reloading.
         loadTasks();
+        loadCustomExtractors();
       } catch {
         // The indicator is ambient; a failed poll should not disturb the page.
       }
@@ -519,7 +551,7 @@ export default function ExtractionPage({ agents = [] }: { agents?: AgentRoomAgen
       clearInterval(timer);
       clearInterval(fileTimer);
     };
-  }, [load, loadTasks]);
+  }, [load, loadCustomExtractors, loadTasks]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -613,7 +645,20 @@ export default function ExtractionPage({ agents = [] }: { agents?: AgentRoomAgen
           </button>
         }
       >
-        <ExtractionTaskForm agents={agents} busy={taskBusy} onCreate={createTask} />
+        <CustomExtractorSection
+          extractors={customExtractors}
+          busy={customExtractorBusy}
+          onCreate={createCustomExtractor}
+          onUse={setSelectedCustomExtractor}
+        />
+
+        <ExtractionTaskForm
+          agents={agents}
+          busy={taskBusy}
+          onCreate={createTask}
+          customExtractor={selectedCustomExtractor}
+          onClearCustomExtractor={() => setSelectedCustomExtractor(null)}
+        />
 
         {tasks.length > 0 && (
           <div className="mb-3 space-y-1.5">

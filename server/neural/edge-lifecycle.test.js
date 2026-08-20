@@ -55,6 +55,10 @@ test("weak unused automatic edges decay and archive while manual edges remain un
   assert.equal(decayed.archived, true);
   assert.ok(decayed.weight < 0.2);
   assert.deepEqual(decayEdge(edge({ creationSource: "manual" })), edge({ creationSource: "manual" }));
+  assert.deepEqual(
+    decayEdge(edge({ creationSource: "neural-nearest-neighbor", relationType: "nearest_neighbor" })),
+    edge({ creationSource: "neural-nearest-neighbor", relationType: "nearest_neighbor" }),
+  );
 });
 
 test("only high-confidence contradictions supersede an older memory", () => {

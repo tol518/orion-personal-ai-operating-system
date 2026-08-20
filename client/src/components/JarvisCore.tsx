@@ -1,7 +1,5 @@
-// The signature arc-reactor core: stacked SVG rings (CSS-animated) whose spin
-// speed rises with active-agent load, plus a glass center readout. Faithful to
-// the reference's JarvisCore technique (SVG rings + speed driven by workload),
-// minus the optional Three.js nucleus (added later).
+import type { CSSProperties } from "react";
+
 type Props = {
   connected: boolean;
   working: number;
@@ -9,94 +7,84 @@ type Props = {
 };
 
 const ACCENT = "rgb(var(--hud-accent))";
+const ACCENT_HOVER = "rgb(var(--hud-accent-hover))";
 
-function ticks(radius: number, count: number, len: number) {
-  const items = [];
-  for (let i = 0; i < count; i++) {
-    const a = (i / count) * Math.PI * 2;
-    const x1 = 220 + Math.cos(a) * radius;
-    const y1 = 220 + Math.sin(a) * radius;
-    const x2 = 220 + Math.cos(a) * (radius - len);
-    const y2 = 220 + Math.sin(a) * (radius - len);
-    items.push(
-      <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={ACCENT} strokeWidth={1.5} />,
-    );
-  }
-  return items;
-}
+const constellation = [
+  { x: 104, y: 190, major: true },
+  { x: 146, y: 137 },
+  { x: 201, y: 168 },
+  { x: 255, y: 117, major: true },
+  { x: 305, y: 176 },
+  { x: 342, y: 229, major: true },
+  { x: 286, y: 280 },
+  { x: 223, y: 309, major: true },
+  { x: 159, y: 270 },
+];
 
 export default function JarvisCore({ connected, working, statusLabel }: Props) {
-  // More active agents -> faster spin (mirrors reference: 1 + working*0.5).
   const speed = 1 + Math.min(working, 8) * 0.5;
-  const outerDur = `${56 / speed}s`;
-  const midDur = `${34 / speed}s`;
-  const innerDur = `${18 / speed}s`;
+  const outerStyle = { "--dur": `${64 / speed}s` } as CSSProperties;
+  const innerStyle = { "--dur": `${42 / speed}s` } as CSSProperties;
 
   return (
     <div
-      className="relative mx-auto"
-      style={{ width: "min(26rem, 80vw)", aspectRatio: "1 / 1", opacity: connected ? 1 : 0.4 }}
+      className="orion-core relative mx-auto"
+      style={{ width: "min(26rem, 80vw)", aspectRatio: "1 / 1", opacity: connected ? 1 : 0.44 }}
     >
-      <svg viewBox="0 0 440 440" className="absolute inset-0 h-full w-full text-accent">
-        {/* outer counter-rotating ring */}
-        <g className="ring-spin-rev" style={{ ["--dur" as any]: outerDur }}>
-          <circle
-            cx="220"
-            cy="220"
-            r="200"
-            fill="none"
-            stroke={ACCENT}
-            strokeOpacity="0.5"
-            strokeWidth="1"
-            strokeDasharray="2 10"
-          />
-          {ticks(196, 60, 10)}
+      <svg viewBox="0 0 440 440" className="absolute inset-0 h-full w-full" aria-hidden="true">
+        <defs>
+          <radialGradient id="orion-core-wash" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={ACCENT} stopOpacity="0.14" />
+            <stop offset="50%" stopColor={ACCENT} stopOpacity="0.035" />
+            <stop offset="100%" stopColor={ACCENT} stopOpacity="0" />
+          </radialGradient>
+          <filter id="orion-star-glow" x="-300%" y="-300%" width="700%" height="700%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        <circle cx="220" cy="220" r="210" fill="url(#orion-core-wash)" />
+
+        <g className="orion-orbit orion-orbit--outer" style={outerStyle}>
+          <ellipse cx="220" cy="220" rx="196" ry="105" transform="rotate(-12 220 220)" />
+          <ellipse cx="220" cy="220" rx="184" ry="72" transform="rotate(28 220 220)" />
         </g>
-        {/* mid ring */}
-        <g className="ring-spin" style={{ ["--dur" as any]: midDur }}>
-          <circle
-            cx="220"
-            cy="220"
-            r="160"
-            fill="none"
-            stroke={ACCENT}
-            strokeOpacity="0.7"
-            strokeWidth="1.5"
-            strokeDasharray="40 16"
-          />
+        <g className="orion-orbit orion-orbit--inner" style={innerStyle}>
+          <ellipse cx="220" cy="220" rx="151" ry="52" transform="rotate(-54 220 220)" />
+          <circle cx="220" cy="220" r="116" />
         </g>
-        {/* inner ring */}
-        <g className="ring-spin-rev" style={{ ["--dur" as any]: innerDur }}>
-          <circle
-            cx="220"
-            cy="220"
-            r="120"
-            fill="none"
-            stroke={ACCENT}
-            strokeOpacity="0.9"
-            strokeWidth="1"
-            strokeDasharray="4 8"
-          />
-          {ticks(120, 24, 14)}
-        </g>
-        {/* core disc */}
-        <circle
-          cx="220"
-          cy="220"
-          r="86"
-          fill="rgb(var(--hud-accent) / 0.06)"
-          stroke={ACCENT}
-          strokeOpacity="0.6"
-          strokeWidth="1.5"
-          className="animate-core-pulse"
-          style={{ transformOrigin: "center", filter: "drop-shadow(0 0 18px rgb(var(--hud-accent)/0.6))" }}
+
+        <path
+          className="orion-constellation"
+          d={constellation.map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`).join(" ")}
         />
+        <path className="orion-constellation orion-constellation--faint" d="M146 137 L159 270 M201 168 L286 280 M255 117 L223 309" />
+
+        {constellation.map((point, index) => (
+          <g key={`${point.x}-${point.y}`} className={`orion-star ${point.major ? "orion-star--major" : ""}`}>
+            <circle cx={point.x} cy={point.y} r={point.major ? 3.2 : 2} fill={ACCENT_HOVER} />
+            {point.major ? (
+              <path
+                d={`M${point.x} ${point.y - 12} L${point.x + 2.4} ${point.y - 2.4} L${point.x + 12} ${point.y} L${point.x + 2.4} ${point.y + 2.4} L${point.x} ${point.y + 12} L${point.x - 2.4} ${point.y + 2.4} L${point.x - 12} ${point.y} L${point.x - 2.4} ${point.y - 2.4} Z`}
+                fill={ACCENT_HOVER}
+                filter="url(#orion-star-glow)"
+                style={{ animationDelay: `${index * 310}ms` }}
+              />
+            ) : null}
+          </g>
+        ))}
+
+        <circle className="orion-core__disc" cx="220" cy="220" r="82" />
+        <circle className="orion-core__disc-line" cx="220" cy="220" r="67" />
       </svg>
 
-      {/* glass center readout */}
       <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
         <div className="hud-label text-[0.6rem]">{connected ? "ONLINE" : "OFFLINE"}</div>
-        <div className="font-mono text-6xl font-semibold text-accent text-glow leading-none">
+        <div className="orion-core__value font-mono text-6xl font-semibold text-accent text-glow leading-none">
           {working}
         </div>
         <div className="hud-label mt-1 text-[0.6rem] opacity-80">ACTIVE</div>

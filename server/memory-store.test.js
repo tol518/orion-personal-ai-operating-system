@@ -61,3 +61,19 @@ test("shared lessons are persisted as agent-managed memory and retrieved by task
     ["general-preference"],
   );
 });
+
+test("nearest-neighbor relationships retain their explicit graph relation type", async () => {
+  const store = new MemoryStore({ mcp: new MemoryMcp(), intervalMs: 60_000 });
+  await store.create({ id: "first", title: "First", body: "One", tags: [] });
+  await store.create({ id: "second", title: "Second", body: "Two", tags: [] });
+
+  await store.addRelationship("first", "second", {
+    relationType: "nearest_neighbor",
+    creationSource: "neural-nearest-neighbor",
+    weight: 0.35,
+    confidence: 0.2,
+  });
+
+  assert.equal(store.get("first").connections[0].relationType, "nearest_neighbor");
+  assert.equal(store.graph().edges[0].relationType, "nearest_neighbor");
+});

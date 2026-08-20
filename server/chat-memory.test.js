@@ -51,3 +51,66 @@ test("attached files are named in context and can be linked by an agent memory a
   }, { get: () => null });
   assert.deepEqual(result.memoryActions[0].payload.attachmentIds, ["file-1"]);
 });
+
+test("Black Noir gets extraction-only memory rules", () => {
+  const prompt = buildMemoryAwareMessage("Run the extractor", [], "", {}, "black-noir");
+  assert.match(prompt, /isolated to Extraction work, with one read-only exception/);
+  assert.match(prompt, /may answer direct questions about a person/);
+  assert.match(prompt, /person-profile answer may describe that person/);
+  assert.match(prompt, /extraction-related/);
+  assert.match(prompt, /Do not create general memories, Projects, Agent Instructions, or relationships/);
+  assert.doesNotMatch(prompt, /If a durable memory or relationship is worth keeping/);
+});
+
+test("Black Noir receives an authoritative extraction catalog", () => {
+  const prompt = buildMemoryAwareMessage(
+    "Which websites can you extract?",
+    [],
+    "",
+    {},
+    "black-noir",
+    {
+      supportedSites: ["ProviderA", "ProviderD", "ProviderC", "ProviderB"],
+      serverManagedSites: ["ProviderB"],
+      customExtractors: [{ name: "ProviderA + ProviderC", sites: ["ProviderA", "ProviderC"] }],
+    },
+  );
+
+  assert.match(prompt, /<jarvis-extraction-catalog>/);
+  assert.match(prompt, /"supportedSites":\["ProviderA","ProviderD","ProviderC","ProviderB"\]/);
+  assert.match(prompt, /"serverManagedSites":\["ProviderB"\]/);
+  assert.match(prompt, /"name":"ProviderA \+ ProviderC"/);
+  assert.match(prompt, /Do not say the list is unavailable/);
+  assert.match(prompt, /J\.A\.R\.V\.I\.S\. performs their browser execution on Black Noir's behalf/);
+  assert.match(prompt, /Do not claim you can check or extract an arbitrary URL/);
+});
+
+test("only Black Noir receives the extraction catalog", () => {
+  const prompt = buildMemoryAwareMessage(
+    "Which websites can you extract?",
+    [],
+    "",
+    {},
+    "main",
+    { supportedSites: ["ProviderA"], customExtractors: [] },
+  );
+
+  assert.doesNotMatch(prompt, /jarvis-extraction-catalog/);
+});
+
+test("Black Noir cannot cite unrelated memory or propose general memory", () => {
+  const memories = new Map([
+    ["extract", { id: "extract", title: "Extractor", tags: ["extraction-related"] }],
+    ["hunt", { id: "hunt", title: "Hunting", tags: ["hunting"] }],
+  ]);
+  const result = decorateChatEvent({
+    state: "final",
+    message: {
+      role: "assistant",
+      content: 'Done.\n<!-- jarvis-memory-citations:["extract","hunt"] -->\n<!-- jarvis-memory-proposals:[{"type":"memory","title":"Other","body":"Other work"}] -->',
+    },
+  }, { get: (id) => memories.get(id) }, "black-noir");
+
+  assert.deepEqual(result.memoryCitations, [{ id: "extract", title: "Extractor" }]);
+  assert.deepEqual(result.memoryActions, []);
+});

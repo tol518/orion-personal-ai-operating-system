@@ -4,10 +4,10 @@
 // Validation lives on the server (extraction-tasks.js) so a task created by any
 // caller is checked the same way; this form's job is to make the shape obvious
 // and to surface the server's complaint verbatim rather than guessing at it.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, ChevronDown, Plus } from "lucide-react";
 import type { AgentRoomAgent } from "./AgentRoom";
-import type { ExtractionTaskInput, Weekday } from "../lib/api";
+import type { CustomExtractor, ExtractionTaskInput, Weekday } from "../lib/api";
 
 const WEEKDAY_OPTIONS: { key: Weekday; label: string }[] = [
   { key: "mon", label: "Monday" },
@@ -98,10 +98,14 @@ export default function ExtractionTaskForm({
   agents,
   busy,
   onCreate,
+  customExtractor,
+  onClearCustomExtractor,
 }: {
   agents: AgentRoomAgent[];
   busy: boolean;
   onCreate: (input: ExtractionTaskInput) => Promise<void>;
+  customExtractor?: CustomExtractor | null;
+  onClearCustomExtractor?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [agentId, setAgentId] = useState("");
@@ -124,6 +128,25 @@ export default function ExtractionTaskForm({
     [agents],
   );
   const effectiveAgentId = agentId || agentOptions[0]?.id || "";
+  const taskAgentId = customExtractor ? customExtractor.runnerAgentId : effectiveAgentId;
+
+  useEffect(() => {
+    if (!customExtractor) return;
+    const today = new Date();
+    const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+    const weekday = WEEKDAY_OPTIONS[today.getDay() === 0 ? 6 : today.getDay() - 1]?.key;
+    setOpen(true);
+    setAgentId(customExtractor.runnerAgentId);
+    setDestination(customExtractor.defaults.destination || "");
+    setTravelStart(customExtractor.defaults.travelStart || "");
+    setTravelEnd(customExtractor.defaults.travelEnd || "");
+    setNights(customExtractor.defaults.nights || "7");
+    setScheduleStart(localDate);
+    setScheduleEnd(localDate);
+    setWeekdays(weekday ? [weekday] : []);
+    setDepartureDays([]);
+    setError(null);
+  }, [customExtractor]);
 
   const toggleDay = (setter: typeof setWeekdays, day: Weekday) =>
     setter((current) => (current.includes(day) ? current.filter((d) => d !== day) : [...current, day]));
@@ -132,10 +155,14 @@ export default function ExtractionTaskForm({
     setError(null);
     try {
       await onCreate({
-        agentId: effectiveAgentId,
+        agentId: taskAgentId,
         destination,
         // The second dropdown is the comparison; empty means a single site.
-        sites: comparisonSite === NO_COMPARISON ? [primarySite] : [primarySite, comparisonSite],
+        sites: customExtractor
+          ? customExtractor.sites
+          : comparisonSite === NO_COMPARISON
+            ? [primarySite]
+            : [primarySite, comparisonSite],
         travelStart,
         travelEnd,
         departureDays,
@@ -143,8 +170,10 @@ export default function ExtractionTaskForm({
         weekdays,
         scheduleStart,
         scheduleEnd,
+        ...(customExtractor ? { customExtractorId: customExtractor.id } : {}),
       });
       setOpen(false);
+      onClearCustomExtractor?.();
       setWeekdays([]);
       setDepartureDays([]);
     } catch (err) {
@@ -169,7 +198,10 @@ export default function ExtractionTaskForm({
         <CalendarClock size={13} className="text-accent" />
         <span className="hud-label text-[0.6rem]">New extraction task</span>
         <button
-          onClick={() => setOpen(false)}
+          onClick={() => {
+            setOpen(false);
+            onClearCustomExtractor?.();
+          }}
           className="ml-auto font-mono text-[0.6rem] text-gray-500 hover:text-gray-300"
         >
           cancel
@@ -177,21 +209,35 @@ export default function ExtractionTaskForm({
       </div>
 
       <div>
-        {fieldLabel("Agent")}
-        <select
-          value={effectiveAgentId}
-          onChange={(event) => setAgentId(event.target.value)}
-          className={inputClass}
-          aria-label="Agent responsible for this extraction"
-        >
-          {agentOptions.length === 0 && <option value="">No agents available</option>}
-          {agentOptions.map((agent) => (
-            <option key={agent.id} value={agent.id}>
-              {agent.label}
-            </option>
-          ))}
-        </select>
+        {fieldLabel(customExtractor ? "Runner" : "Agent")}
+        {customExtractor ? (
+          <div className={`${inputClass} border-sky-400/30 text-sky-300`}>Black Noir</div>
+        ) : (
+          <select
+            value={effectiveAgentId}
+            onChange={(event) => setAgentId(event.target.value)}
+            className={inputClass}
+            aria-label="Agent responsible for this extraction"
+          >
+            {agentOptions.length === 0 && <option value="">No agents available</option>}
+            {agentOptions.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.label}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
+
+      {customExtractor && (
+        <div>
+          {fieldLabel("Custom extractor")}
+          <div className={`${inputClass} flex items-center justify-between gap-2`}>
+            <span className="truncate text-gray-200">{customExtractor.name}</span>
+            <span className="shrink-0 text-[0.6rem] text-gray-500">WALL-E built</span>
+          </div>
+        </div>
+      )}
 
       <div>
         {fieldLabel("Destination")}
@@ -204,7 +250,7 @@ export default function ExtractionTaskForm({
         />
       </div>
 
-      <div>
+      {!customExtractor && <div>
         {fieldLabel("Websites")}
         <div className="flex items-center gap-1.5">
           <select
@@ -239,7 +285,7 @@ export default function ExtractionTaskForm({
             ))}
           </select>
         </div>
-      </div>
+      </div>}
 
       <div className="grid grid-cols-2 gap-2">
         <div>

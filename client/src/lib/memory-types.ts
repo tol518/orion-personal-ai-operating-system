@@ -10,7 +10,8 @@ export type MemoryRelationType =
   | "part_of"
   | "same_project"
   | "same_entity"
-  | "temporal";
+  | "temporal"
+  | "nearest_neighbor";
 
 export type MemoryConnection = {
   source: string;

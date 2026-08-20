@@ -61,7 +61,7 @@ const EMPTY_EXECUTION_STATE: ExecutionTargetState = {
 };
 const CHAT_AGENT_NAMES: Record<string, string> = {
   main: "J.A.R.V.I.S.",
-  codex: "Codex Agent",
+  codex: "WALL-E",
 };
 
 function chatAgentName(agent: AgentRoomAgent): string {

@@ -1,16 +1,16 @@
-# JARVIS
+# ORION
 
-JARVIS is a personal AI operating system built around an OpenClaw deployment. It brings agent sessions, memory-backed chat, workflow learning, authorized data extraction, job-application assistance, node control, screen mirroring, and usage reporting into one React control center.
+ORION is a personal AI operating system built around an OpenClaw deployment. It brings agent sessions, memory-backed chat, workflow learning, authorized data extraction, job-application assistance, node control, screen mirroring, and usage reporting into one React control center.
 
 The project demonstrates how to turn capable AI agents into a usable, stateful product: a React and TypeScript interface, an Express backend-for-frontend, WebSocket gateway integration, SQLite persistence, Obsidian-backed memory, neural relationship processing, browser workflows, human approval gates, and defensive access controls.
 
-This public repository is a technical portfolio of the JARVIS project for recruiters and other technical reviewers. It includes the application architecture, frontend, backend, persistence, agent orchestration, safety controls, tests, and documentation needed to understand how the system works.
+This public repository is a technical portfolio of the ORION project for recruiters and other technical reviewers. It includes the application architecture, frontend, backend, persistence, agent orchestration, safety controls, tests, and documentation needed to understand how the system works.
 
 <img width="1918" height="986" alt="image" src="https://github.com/user-attachments/assets/962d744b-0f9f-4ba4-82ff-f02bb84253c4" />
 
 ## Why this project is worth reviewing
 
-JARVIS is more than a chat screen. It connects model-driven reasoning to persistent state, real tools, local devices, and reviewable workflows while keeping sensitive actions behind explicit boundaries.
+ORION is more than a chat screen. It connects model-driven reasoning to persistent state, real tools, local devices, and reviewable workflows while keeping sensitive actions behind explicit boundaries.
 
 - **Agent orchestration:** manages sessions, models, execution targets, gateway events, retries, cancellation, and usage attribution.
 - **A compounding Second Brain:** stores approved memories and shared lessons, then retrieves them in later work so agents can learn from reviewed mistakes and improve future decisions without retraining the model.
@@ -26,7 +26,7 @@ JARVIS is more than a chat screen. It connects model-driven reasoning to persist
 
 ## Public portfolio scope and redactions
 
-This is the real JARVIS codebase with narrowly scoped security and privacy redactions. The project intentionally omits credentials, local environment values, personal documents and runtime data, machine-specific paths, and private integration details such as real provider identities, endpoints, schemas, browser profiles, and target mappings. Those omissions protect private services and data; they are not placeholders for the core application.
+This is the real ORION codebase with narrowly scoped security and privacy redactions. The project intentionally omits credentials, local environment values, personal documents and runtime data, machine-specific paths, and private integration details such as real provider identities, endpoints, schemas, browser profiles, and target mappings. Those omissions protect private services and data; they are not placeholders for the core application.
 
 The implementation behind the product remains available to inspect: the React interface, Express BFF, OpenClaw gateway integration, agent and session orchestration, Second Brain and neural-memory logic, workflow learning, extraction scheduling and output handling, Hunting workflows, node and screen controls, persistence model, security boundaries, and automated tests. Neutral provider adapters show the integration boundary and normalized data flow without exposing a third party's private or operational contract.
 
@@ -48,7 +48,7 @@ The implementation behind the product remains available to inspect: the React in
 - [Persistence](#persistence)
 - [Configuration](#configuration)
 - [Local setup](#local-setup)
-- [Running JARVIS](#running-jarvis)
+- [Running ORION](#running-orion)
 - [Security](#security)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
@@ -59,19 +59,20 @@ The implementation behind the product remains available to inspect: the React in
 
 | Area | Implemented behavior |
 | --- | --- |
-| Dashboard | Reports gateway connectivity, active sessions, agent activity, paired nodes, token usage, and estimated cost. |
-| Agent Room | Lists agents and sessions supplied by OpenClaw, creates and resets sessions, changes allowed models, and shows running or error states. |
+| Dashboard | Reports gateway connectivity, active sessions, agent activity, paired nodes, token usage, and estimated cost, behind an animated Orion constellation core whose motion tracks active agent load. |
+| Agent Room | Lists agents and sessions supplied by OpenClaw, creates and resets sessions, changes allowed models, shows running or error states, and creates new agents with their own instructions, role, and animated sprite appearance. |
 | Chat | Streams replies, carries attachments, selects an execution target, retrieves relevant memory, and reports which memories were used or saved. |
 | Second Brain | Reads and writes an Obsidian-backed Markdown wiki, provides search and editing, enforces revision checks, and renders relationships in a Three.js graph. |
 | Neural memory | Builds local embeddings, scores candidate relationships, classifies strong candidates, strengthens used links, decays weak automatic links, and proposes consolidations or contradictions for review. |
 | Authorized extraction | Creates persisted neutral-provider tasks, runs them on selected weekdays, tracks output files and progress, and supports run windows, pause, resume, stop, preview, and download. |
+| Custom extractors | Turns a written brief or an uploaded source folder into a reusable extraction package: WALL-E builds and validates it, Black Noir executes it, and the manifest it produces becomes a selectable option on the task form. |
 | Workflow learning | Marks a local observation window, redacts it, produces a reviewable workflow draft, stores the approved recipe, and replays it with confirmation gates. |
 | Hunting | Maintains a canonical CV and search profile, discovers roles, prepares application artifacts, fills verified fields, stops for human checkpoints, and records application history. |
 | Nodes and screens | Lists paired OpenClaw nodes, removes offline nodes, takes screen snapshots on demand, and supports bounded manual click and scroll control when a node advertises it. |
 
 ## Architecture
 
-JARVIS has three main runtime boundaries:
+ORION has three main runtime boundaries:
 
 1. The React client renders the control surface and calls only the BFF.
 2. The Express BFF owns credentials, persistence, orchestration state, safety checks, and local service integrations.
@@ -98,21 +99,31 @@ flowchart TB
 ### Startup sequence
 
 1. `server/index.js` loads `server/.env` and starts the OpenClaw gateway WebSocket client.
-2. The BFF creates the shared SQLite stores, file stores, browser and screen adapters, workflow services, extraction scheduler, and Hunting services.
-3. The Obsidian MCP client starts on demand. When available, JARVIS refreshes the memory cache, creates missing managed instruction pages, links project context, and starts the neural memory engine.
+2. The BFF creates the shared SQLite stores, file stores, browser and screen adapters, workflow services, extraction scheduler, custom extractor library, agent profile store, and Hunting services. Any custom extractor build interrupted by a restart is marked failed rather than left building forever.
+3. The Obsidian MCP client starts on demand. When available, ORION refreshes the memory cache, creates missing managed instruction pages, links project context, and starts the neural memory engine.
 4. Express registers the REST and SSE surfaces. In production mode it also serves `client/dist`.
 5. After the server owns its port, it marks interrupted Hunting and extraction work accurately and starts the extraction scheduler.
 6. The client polls summary data every 10 seconds and receives gateway, session, chat, memory, and node changes over SSE.
 
 The BFF does not replace OpenClaw's agent runtime. It prepares context, invokes gateway methods, persists application-specific state, and converts gateway events into a browser-friendly API.
 
+### Interface design
+
+The control surface uses a celestial theme, named for the constellation the project takes its name from. It is not decoration layered over the data: the visual language is driven by runtime state.
+
+- The palette is near-black space with midnight-navy elevation and silver-blue starlight accents, defined once as CSS custom properties in `client/src/index.css` and consumed through Tailwind tokens in `client/tailwind.config.js`. Changing the accent is a one-variable change, not a search across components.
+- The dashboard core (`client/src/components/JarvisCore.tsx`) draws the Orion constellation as layered SVG with a soft radial wash and glowing stars. Its rotation speed rises with the number of working agents, so the screen reads as busy or idle before any number is read.
+- The Second Brain graph keeps its Three.js rendering, and selecting a node now eases every unrelated node and edge back to a dimmed state so the selected memory's neighbourhood stands out. Clicking empty space clears the selection; a drag that rotates the camera does not, which is why the canvas separates a click from a rotate by pointer distance and duration.
+- Agents render as animated sprites — a frame map per motion state, driven by CSS custom properties rather than per-frame JavaScript, so an idle Agent Room costs nothing to keep on screen.
+
 ## Technology stack
 
 | Layer | Technology |
 | --- | --- |
 | Client | React 18, TypeScript, Vite 6, Tailwind CSS 3 |
-| Visualization | Three.js for the memory graph |
+| Visualization | Three.js for the memory graph, SVG and CSS for the constellation core and agent sprites |
 | Client utilities | Lucide icons, PDF.js, Inter, JetBrains Mono |
+| Image processing | `@napi-rs/canvas` for sprite-sheet background removal |
 | BFF | Node.js ESM, Express 4, WebSocket client, Server-Sent Events |
 | Persistence | Built-in `node:sqlite`, Markdown files, YAML frontmatter, local artifact directories |
 | Documents | PDF.js, PDFKit, pdf-lib, Mammoth, headless Chrome or Chromium for locked CV rendering |
@@ -136,11 +147,18 @@ The repository has separate `package-lock.json` files for `client/` and `server/
 |   |-- index.js                    # Composition root and HTTP/SSE API
 |   |-- gateway.js                  # OpenClaw WebSocket client and reconnect lifecycle
 |   |-- memory-store.js             # Obsidian-backed Markdown cache and graph
-|   |-- managed-memory.js           # Agent instructions, projects, and shared lessons
+|   |-- managed-memory.js           # Agent instructions, projects, shared lessons, and per-agent scope
 |   |-- neural/                     # Embeddings, relation scoring, lifecycle, and proposals
+|   |-- agent-creator.js            # Transactional agent creation and instruction memory
+|   |-- agent-appearance-generator.js # Sprite-sheet grid analysis through OpenClaw's model runner
+|   |-- agent-profile-store.js      # Role, appearance, and animation spec per agent
+|   |-- sprite-background.js        # Background removal and transparency verification
 |   |-- extraction-tasks.js         # Persisted task specification and due-date rules
 |   |-- extraction-scheduler.js     # Scheduled agent dispatch and recovery
 |   |-- extractions.js              # Output catalog, progress, preview, and run control
+|   |-- custom-extractors.js        # Reusable extractor library, manifests, and upload limits
+|   |-- custom-extractor-builder.js # Delegates package construction to WALL-E
+|   |-- templates/                  # Bundled extractor template (public placeholder)
 |   |-- workflows/                  # Observation, learning, storage, and replay
 |   |-- hunting/                    # CV, discovery, application, document, and browser services
 |   |-- execution-target.js         # Per-session Mac, Windows, or neutral execution binding
@@ -193,17 +211,43 @@ The final gateway event may carry hidden, bounded metadata for memory citations 
 
 ### Agent ownership
 
-JARVIS does not provision persistent agent definitions. The Agent Room calls OpenClaw's agent and session APIs, so available agents, models, and tools come from the connected gateway configuration. The BFF can create a session for an existing agent, reset or delete that session, and change a model only when the gateway reports that model as enabled.
+Available agents, models, and tools come from the connected gateway configuration. The Agent Room calls OpenClaw's agent and session APIs, so the BFF can create a session for an existing agent, reset or delete that session, and change a model only when the gateway reports that model as enabled.
 
-The memory system creates instruction pages for three meaningful roles when the vault is available:
+The memory system creates instruction pages for the built-in roles when the vault is available:
 
 | Role | Responsibility in this application |
 | --- | --- |
-| JARVIS (`main`) | Main orchestrator for chat, application workflows, document work, and general delegation. |
-| Codex (`codex`) | Software engineering specialist. JARVIS stores its operating instructions and includes it in usage attribution. |
-| Black Noir (`black-noir`) | Focused job-discovery specialist. Hunting delegates discovery to a dedicated session for this agent. |
+| J.A.R.V.I.S. (`main`) | Main orchestrator for chat, application workflows, document work, and general delegation. |
+| WALL-E (`codex`) | Software engineering specialist. Implements, debugs, reviews, and validates code, and builds reusable custom extractor packages. |
+| Black Noir (`black-noir`) | Extraction execution specialist and job-discovery specialist. Runs, monitors, and validates extraction tasks, and owns delegated job searches from a dedicated session. |
 
-These pages are operating context, not agent registrations. If the corresponding OpenClaw agent is absent, JARVIS cannot create it from the dashboard.
+The three built-in pages are operating context, not agent registrations: if the corresponding OpenClaw agent is absent, its instruction page still exists but has nothing to drive.
+
+Agents beyond those three are created from the dashboard — see [Creating an agent](#creating-an-agent). A created agent, such as an operator-defined `Patrick Bateman`, arrives with its own workspace, `AGENTS.md`, instruction memory, role label, and animated appearance, and then behaves like any other agent in chat, delegation, and usage attribution.
+
+Black Noir runs with a narrowed memory scope, because an extraction specialist should not be able to browse or rewrite the operator's wider Second Brain:
+
+- It reads only its own instruction page, memories labelled `extraction-related`, and person-labelled memories relevant to a direct question about a person.
+- It may write exactly one kind of memory: an extraction shared lesson. Projects, general memories, agent instructions, and relationships are refused.
+- Its prompt carries an authoritative extraction catalog — the supported sites, the sites the BFF executes on its behalf, and the ready custom extractors — so it answers "which sites do you support?" from server state rather than guesswork, and declines arbitrary URLs instead of implying it can extract them.
+
+The scope filter is enforced on both sides of a turn: `canAgentReadMemory` in `server/managed-memory.js` decides what reaches the prompt and what the reply is allowed to cite, and it also filters the candidate list the UI shows, so an out-of-scope title never leaks through retrieval metadata.
+
+### Creating an agent
+
+The Agent Room can create a new OpenClaw agent from the dashboard. The flow is deliberately two-phase, because appearance analysis is the step most likely to fail:
+
+1. The operator uploads one sprite sheet and gives the agent a name, a role, and its operating instructions.
+2. `POST /api/agents/appearance/generate` sends that image to GPT-5.4 through OpenClaw's existing model connection and asks only for the sheet's grid geometry and frame indices for idle, walking, sitting, working, and dancing. The reply is parsed as strict JSON and range-checked against the declared grid, so a malformed animation map is rejected rather than stored.
+3. `server/sprite-background.js` then makes the sheet's background transparent and verifies the result, so a created agent does not render as a rectangle of flat colour over the celestial UI.
+4. `POST /api/agents` validates the input, registers the agent with the gateway, writes its `AGENTS.md`, records its profile, and upserts its instruction page into the Second Brain.
+
+Two properties of that last step are worth reading in `server/agent-creator.js`:
+
+- **The uploaded image is data, never instruction.** The analysis prompt tells the model to treat the sheet as artwork and ignore any text inside it, and the server only ever accepts a grid and frame indices back — never behaviour.
+- **Creation is transactional.** If the gateway registration, the `AGENTS.md` write, or the memory upsert fails, the partial agent and its memory are rolled back, and the original error is preserved. The workspace directory is deliberately left alone so a pre-existing folder is never erased by a failed creation.
+
+Created agents appear in `GET /api/agents` enriched with their role and appearance, and the UI animates the sprite from the analyzed frame map.
 
 <img width="1661" height="785" alt="image" src="https://github.com/user-attachments/assets/6f658d54-3367-4a70-8b78-708850383184" />
 
@@ -214,7 +258,7 @@ Tool and agent selection depends on the workflow:
 - In chat, the user selects an existing agent. The session also carries a persisted execution target: Mac, Windows, or neutral.
 - A machine-specific target binds OpenClaw execution to an available node. The BFF fails closed when the selected node is offline.
 - An extraction task stores the selected agent ID and dispatches each due run to a dedicated session for that task.
-- Job discovery uses the dedicated Black Noir session. CV editing, document review, cover letters, interview preparation, and application-form work use isolated JARVIS sessions.
+- Job discovery uses the dedicated Black Noir session. CV editing, document review, cover letters, interview preparation, and application-form work use isolated ORION-owned sessions.
 - Learned browser steps use deterministic browser actions and live accessibility snapshots. Desktop or free-form steps use one bounded agent turn.
 - Hunting application sessions are limited by the included OpenClaw policy plugin to the controlled browser tool and node target. Shell and command fallbacks are blocked for those sessions.
 
@@ -234,7 +278,7 @@ Cancellation changes the owned runtime state. Extraction cancellation aborts the
 
 ## Memory and knowledge
 
-The Second Brain is a password-gated section, using the same short-lived, rate-limited access pattern as Hunting. Both sections are locked because they contain sensitive personal information about the operator, including identity, career, application, and private life context. The memory lock protects direct browsing and editing of the vault; the memory system still supplies approved context to authorized agent workflows as part of normal JARVIS operation.
+The Second Brain is a password-gated section, using the same short-lived, rate-limited access pattern as Hunting. Both sections are locked because they contain sensitive personal information about the operator, including identity, career, application, and private life context. The memory lock protects direct browsing and editing of the vault; the memory system still supplies approved context to authorized agent workflows as part of normal ORION operation.
 
 <img width="1663" height="963" alt="image" src="https://github.com/user-attachments/assets/300a69f7-b50e-4b75-8e77-be894b63eecc" />
 
@@ -259,9 +303,11 @@ All other pages are general memories. Chat transcripts are not copied into the v
 5. Manual edits use a revision hash. If Obsidian changed the page after it was loaded, the API returns a conflict instead of overwriting the external edit.
 6. The BFF broadcasts memory changes over SSE and schedules neural reconciliation.
 
-Agents may update the same shared lesson by stable managed key, which prevents one correction from becoming several near-duplicate pages. An agent other than JARVIS cannot rewrite another agent's instruction page.
+Agents may update the same shared lesson by stable managed key, which prevents one correction from becoming several near-duplicate pages. An agent other than J.A.R.V.I.S. cannot rewrite another agent's instruction page.
 
-Shared lessons let agents learn from past mistakes without retraining the underlying model. After a mistake is reviewed, an agent can record what triggered it, the better approach, what to avoid, and how to verify the result. JARVIS retrieves relevant lessons during later tasks, so the correction can influence future work. These lessons remain inspectable and editable in the vault; JARVIS does not treat an unreviewed chat or failed run as trusted knowledge automatically.
+Retrieval is also scoped per agent. A specialist with a narrowed scope — Black Noir is the built-in example — receives only the memories its role allows, and a lesson it writes is tagged with its scope label so the boundary survives the write as well as the read. Memories can carry the `extraction-related` label from the memory editor, and the Second Brain has a matching filter, so the operator can see exactly what a scoped agent is able to read.
+
+Shared lessons let agents learn from past mistakes without retraining the underlying model. After a mistake is reviewed, an agent can record what triggered it, the better approach, what to avoid, and how to verify the result. ORION retrieves relevant lessons during later tasks, so the correction can influence future work. These lessons remain inspectable and editable in the vault; ORION does not treat an unreviewed chat or failed run as trusted knowledge automatically.
 
 Attachments are stored separately from Markdown. A memory contains only links to attachment IDs, and an agent may reference only attachments already granted to its session.
 
@@ -282,6 +328,8 @@ flowchart LR
 
 Manual edges are protected from automatic decay. Automatic edges strengthen when their pages are retrieved together, decay when unused, and archive when they become weak. Contradictions remain in the proposal queue because approval may supersede an older page. Dense groups may produce a consolidation proposal, but the engine does not recursively summarize its own consolidation output.
 
+A page that no classifier would connect used to sit alone in the graph forever, which made the visualization progressively less useful as the vault grew. Each isolated page now also receives one `nearest_neighbor` edge to its strongest available semantic match, recorded with its own relation type and creation source. Those edges are explicitly exempt from decay — a link that exists to keep a page reachable must not be archived for being weak — and they stay visually distinguishable from a classified relationship rather than being presented as a claim about meaning.
+
 ## Authorized extraction
 
 The extraction feature is for authorized systems and data sources only. The public repository identifies integrations as `ProviderA` through `ProviderE`; it does not contain the private mapping to operational targets. Task scheduling, agent delegation, run control, pagination, normalization, comparison output, persistence, and monitoring remain visible in the public implementation.
@@ -298,10 +346,26 @@ An extraction task records:
 - inclusive travel date range;
 - optional departure weekdays;
 - one stay length or an inclusive stay-length range;
-- weekdays on which the extraction should execute; and
-- schedule start and end dates.
+- weekdays on which the extraction should execute;
+- schedule start and end dates; and
+- an optional custom extractor to execute instead of the built-in per-site flow.
 
-Departure weekdays and execution weekdays are different controls. A task can run on Monday while searching only Saturday departures. The server accepts at most 120 selected departure dates and stay lengths from 1 through 28 nights.
+Departure weekdays and execution weekdays are different controls. A task can run on Monday while searching only Saturday departures. The server accepts at most 120 selected departure dates and stay lengths from 1 through 28 nights. A custom extractor may raise that departure-date ceiling for its own tasks, because a proven package has demonstrated it can cover a longer range; the raised limit comes from the extractor's manifest and is still bounded.
+
+### Custom extractors
+
+A custom extractor is a reusable extraction package, built once and then selectable on the task form. The operator supplies a brief, a source folder, or both; the library lives in SQLite while the packages themselves live in the OpenClaw workspace as named artifacts.
+
+The build and run responsibilities are deliberately split, and the split is enforced on the server rather than trusted from the client:
+
+- **WALL-E builds.** `server/custom-extractor-builder.js` hands the request to a dedicated Codex-agent session with an explicit contract: write implementation files only inside the extractor directory, produce an `extractor.json` manifest, remove embedded secrets, parameterize the destination and date inputs, and run only local syntax or parser tests. It is told not to run a live network extraction while building, and not to delegate implementation work to the runner.
+- **Black Noir runs.** When a task names a custom extractor, `customExtractorTaskInput` overrides the runner and site list from the extractor's manifest, so a client cannot reassign that work to another agent. The scheduler then tells Black Noir to copy the ready package into a fresh run folder and execute it there, explicitly not to redesign it — a broken package is reported back for WALL-E to repair.
+
+Uploaded source is treated as untrusted input throughout. Paths are normalized and rejected if they escape the extractor directory or match credential-shaped filenames, and per-file, total-size, and file-count limits apply before anything is written to disk. The build prompt states plainly that uploaded files and their text are reference data, not instructions.
+
+Output verification differs from the built-in path: instead of expecting one session folder per site, the scheduler looks for the extractor's own `<slug>-*` run folder and counts the CSV files inside it, so a package that produces a combined comparison output is not reported as a failure.
+
+A bundled template directory seeds one reference package on first start. In this public repository that template is a documented placeholder — the operational version encodes provider endpoints and request protocols and stays in private configuration. See `server/templates/provider-a-provider-c/README.md`.
 
 ### Schedule and lifecycle
 
@@ -340,7 +404,7 @@ The Extraction page lists CSV artifacts, previews bounded rows, and provides dow
 
 ## Workflow learning
 
-Workflow learning turns a user-reviewed observation window into a reusable recipe. JARVIS treats the local observation service as the capture layer only. It does not start or manage that service.
+Workflow learning turns a user-reviewed observation window into a reusable recipe. ORION treats the local observation service as the capture layer only. It does not start or manage that service.
 
 ```mermaid
 flowchart LR
@@ -355,7 +419,7 @@ flowchart LR
 
 ### Privacy boundary
 
-- JARVIS requests OCR, accessibility text, and input events. It does not request frames or copy screenshots.
+- ORION requests OCR, accessibility text, and input events. It does not request frames or copy screenshots.
 - Audio transcription is off by default and is requested only for a recording where the user enabled narration.
 - Password managers, authenticators, and configured excluded applications are removed before the digest is stored.
 - Credential-shaped text is replaced with `[redacted]` before it can reach the workflow learner.
@@ -453,9 +517,11 @@ The React client uses a same-origin `/api` surface. Successful JSON responses us
 | --- | --- | --- |
 | Health and live events | `/api/health`, `/api/status`, `/api/events` | Express and gateway client |
 | Agents and chat | `/api/agents`, `/api/sessions`, `/api/history`, `/api/chat` | OpenClaw gateway adapter |
+| Agent creation | `/api/agents/appearance/generate`, `POST /api/agents` | Appearance generator, sprite processing, agent creator, and managed memory |
 | Models and targets | Agent model and session execution-target routes | Gateway config plus SQLite target store |
 | Memory | `/api/memories`, `/api/memory/graph`, neural status and proposal routes | Memory, proposal, and neural services |
 | Authorized extraction | `/api/extractions`, task routes, run controls, schedule, preview, and download | Extraction catalog, task store, and scheduler |
+| Custom extractors | `/api/extractions/custom-extractors` | Custom extractor store and builder |
 | Workflows | `/api/workflows`, learning-session routes, run continue and cancel routes | Workflow learner, store, and runner |
 | Hunting | `/api/hunting` access, CV, discovery, application, takeover, and document routes | Hunting service modules |
 | Nodes and screens | `/api/nodes`, screen-control, screen-input, and node-invoke routes | Gateway, screen bridge, and control lease service |
@@ -468,11 +534,11 @@ The SSE stream sends initial gateway and memory status, keeps the connection ali
 | Store | Data | Notes |
 | --- | --- | --- |
 | Obsidian vault | Memory pages, relationships, agent instructions, projects, shared lessons, readable workflow recipes | Human-editable source of truth. Accessed through the configured MCP process. |
-| `server/data/jarvis.sqlite` | Attachments metadata, execution targets, proposals, neural state, extraction tasks, CV history, Hunting state, workflow specs, and run history | Uses Node's built-in SQLite API. Stores application state, not raw chat transcripts. |
-| `server/data/attachments/` | Chat and memory attachment bytes | Files use generated names and restrictive file permissions. |
-| Authorized extraction workspace | Run manifests, control state, heartbeats, per-date CSV files, and combined CSV output | Root is configurable. The BFF indexes and validates files but agents produce them. |
+| `server/data/jarvis.sqlite` | Attachments metadata, execution targets, proposals, neural state, extraction tasks, custom extractor library, agent profiles and appearance analyses, CV history, Hunting state, workflow specs, and run history | Uses Node's built-in SQLite API. Stores application state, not raw chat transcripts. |
+| `server/data/attachments/` | Chat and memory attachment bytes, including processed agent sprite sheets | Files use generated names and restrictive file permissions. |
+| Authorized extraction workspace | Run manifests, control state, heartbeats, per-date CSV files, combined CSV output, and `Custom_Extractors/` packages | Root is configurable. The BFF indexes and validates files but agents produce them. |
 | Local artifact directories | Prepared CVs, cover letters, and interview notes | Paths can be overridden for the local deployment. |
-| Observation service storage | Raw screen and audio capture | Owned by the observation service. JARVIS stores only its bounded redacted digest. |
+| Observation service storage | Raw screen and audio capture | Owned by the observation service. ORION stores only its bounded redacted digest. |
 
 ## Configuration
 
@@ -529,7 +595,7 @@ SCREENPIPE_API_KEY=<LOCAL_OBSERVATION_SERVICE_TOKEN>
 | `JARVIS_BROWSER_PROFILE` | Optional OpenClaw browser profile used for application work. |
 | `JARVIS_BROWSER_TIMEOUT_MS` | Optional browser operation timeout. |
 | `JARVIS_AUTO_SUBMIT_HOSTS` | Explicit host allowlist for guarded submission. Blank keeps automatic submission off. |
-| `JARVIS_PREPARE_ONLY_HOSTS` | Hosts where JARVIS prepares artifacts and hands data entry to the user. |
+| `JARVIS_PREPARE_ONLY_HOSTS` | Hosts where ORION prepares artifacts and hands data entry to the user. |
 | `JARVIS_COVER_LETTER_DIR` | Optional cover-letter output directory. |
 | `JARVIS_INTERVIEW_PREP_DIR` | Optional interview-preparation output directory. |
 | `JARVIS_DISCOVERY_TIMEOUT_MS` | Optional job-discovery turn ceiling. |
@@ -577,14 +643,14 @@ Edit `server/.env` with local values. At minimum, set a strong `JARVIS_ACCESS_PA
 
 ### Fresh installation versus an existing private deployment
 
-Keep OpenClaw and JARVIS as separate sibling directories. Do not copy JARVIS into the OpenClaw source tree.
+Keep OpenClaw and ORION as separate sibling directories. Do not copy ORION into the OpenClaw source tree.
 
 ```text
 ~/openclaw/
 ~/openclaw-jarvis/
 ```
 
-A fresh OpenClaw checkout plus this public repository does not reproduce an existing private JARVIS deployment by itself. OpenClaw must be configured separately with the agents, models, tools, plugins, gateway, and nodes that JARVIS will use. JARVIS then connects to that gateway through the local values in `server/.env`.
+A fresh OpenClaw checkout plus this public repository does not reproduce an existing private ORION deployment by itself. OpenClaw must be configured separately with the agents, models, tools, plugins, gateway, and nodes that ORION will use. ORION then connects to that gateway through the local values in `server/.env`.
 
 The public repository intentionally excludes private deployment state:
 
@@ -594,7 +660,7 @@ The public repository intentionally excludes private deployment state:
 - machine-specific paths, node configuration, and local service settings; and
 - real extraction-provider identities, endpoints, schemas, profiles, and mappings.
 
-To move an existing deployment to a new machine, clone OpenClaw and JARVIS separately, configure OpenClaw, install both JARVIS packages, and create `server/.env` locally. Restore private runtime data only from a trusted private backup, and never commit it to this repository. Without that private state, the application starts as a clean installation. Most features become available after their dependencies are configured, but neutral extraction adapters cannot reproduce a private provider integration until you supply an authorized private translation layer.
+To move an existing deployment to a new machine, clone OpenClaw and ORION separately, configure OpenClaw, install both ORION packages, and create `server/.env` locally. Restore private runtime data only from a trusted private backup, and never commit it to this repository. Without that private state, the application starts as a clean installation. Most features become available after their dependencies are configured, but neutral extraction adapters cannot reproduce a private provider integration until you supply an authorized private translation layer.
 
 ### Optional OpenClaw policy plugin
 
@@ -611,7 +677,7 @@ npx screenpipe auth token
 
 Put the returned token in `SCREENPIPE_API_KEY`, keep it local, and restart the BFF. The Workflows page distinguishes an unreachable service from one that is reachable but not readable.
 
-## Running JARVIS
+## Running ORION
 
 ### Production-style local run
 
@@ -650,7 +716,7 @@ This repository is designed for an authenticated local deployment, not direct in
 - The BFF binds to loopback by default. Every non-health API and the SSE stream require an authenticated dashboard session.
 - Dashboard login uses a timing-safe password check, rate-limits failures, and issues an HttpOnly, same-site in-memory session cookie.
 - Cross-origin API access is not enabled. Same-origin-sensitive actions compare the browser origin against an explicit server-owned allowlist.
-- Keep JARVIS behind an authenticated reverse proxy or equivalent access boundary if remote access is required. Do not publish the BFF port directly to the internet.
+- Keep ORION behind an authenticated reverse proxy or equivalent access boundary if remote access is required. Do not publish the BFF port directly to the internet.
 - Gateway, MCP, observation, and screen-helper credentials stay in `server/.env` and are used only by the BFF.
 - Hunting unlock uses a timing-safe password check, rate-limits failures, and issues an opaque in-memory session token.
 - Second Brain unlock uses the same timing-safe password check, failure rate limit, same-origin requirement, and short-lived in-memory session token as Hunting.
@@ -658,6 +724,8 @@ This repository is designed for an authenticated local deployment, not direct in
 - Manual screen control and Hunting unlock require same-origin requests. Screen input also requires a live, short-lived lease.
 - Hunting browser sessions are constrained by the included OpenClaw plugin. Credentials, CAPTCHA work, identity verification, account creation, and payment details remain blocked.
 - Workflow learning removes protected applications and credential-shaped text before the digest reaches an agent.
+- Uploaded material is treated as data, never as instruction. Agent sprite sheets are analyzed for grid geometry only, and custom extractor uploads are path-normalized, size-limited, screened for credential-shaped filenames, and described to the builder as untrusted reference files.
+- Agent memory scope is enforced server-side on both the prompt and the reply, so a narrowed specialist cannot read, cite, or write outside its role even if a client asks it to.
 - Memory saves use revision checks, and path-based file APIs resolve only inside their configured roots.
 - Attachments are limited in count and size, named safely, hashed, written with restrictive permissions, and served only as downloads with MIME sniffing disabled.
 - Treat the SQLite database, vault, CVs, generated documents, usage history, job records, and extraction output as private data. Back them up and delete them according to local policy.
@@ -691,7 +759,7 @@ cd client
 npm run build
 ```
 
-The client build runs strict TypeScript checking before Vite. The repository has no client test script and no lint script. Two server tests exercise generated CV PDFs and therefore need an installed, launchable Chrome or Chromium process; they fail in environments that block browser startup.
+The client build runs strict TypeScript checking before Vite. The repository has no client test script and no lint script. Two server tests exercise generated CV PDFs and therefore need an installed, launchable Chrome or Chromium process; they fail in environments that block browser startup. The sprite-background tests need `@napi-rs/canvas`, which is installed with the server dependencies.
 
 ## Troubleshooting
 
@@ -708,6 +776,21 @@ The client build runs strict TypeScript checking before Vite. The repository has
 - Execution requires the node's system-run capability; screen views require snapshot capability, and manual input requires screen-input capability.
 - Remove an offline node only when the pairing is no longer needed.
 
+### Agent creation fails at the appearance step
+
+- Sprite analysis runs through OpenClaw's model connection. An authentication-shaped failure is reported as a reconnect instruction rather than a generic error.
+- The uploaded file must be an image, and exactly one sheet is analyzed per agent.
+- A rejected animation map means the model did not return a usable grid for that sheet. Sheets with evenly spaced, equally sized cells analyze reliably; collages and single illustrations do not.
+- Creation also requires a reachable Second Brain, because the agent's instruction page is part of the created agent, not an optional extra.
+
+### A custom extractor is stuck or failed
+
+- Builds run in a dedicated WALL-E session. A build interrupted by a server restart is marked failed on the next start, with a message saying to create it again.
+- A failed build keeps its request and uploaded source on disk so the brief can be revised instead of re-uploaded.
+- An extractor only becomes selectable once it reports `ready` with a valid manifest. A task referencing an extractor that is no longer ready is refused at dispatch rather than run against a broken package.
+
 ## Known limitations
 
 The Hunting feature is still incomplete and has unresolved compatibility and reliability issues across many application sites. The automated application flow has so far been able to complete three job applications. It should be treated as a working proof of the approach, not as a broadly reliable automation system.
+
+Custom extractor building depends on the quality of the supplied brief or source folder, and a produced package is only as reliable as the site it targets. Agent appearance analysis depends on an external model reading an uploaded sprite sheet correctly, so sheets that do not use an even grid may need to be reformatted before they animate as intended.

@@ -21,6 +21,10 @@ type NodeRecord = {
   dragging: boolean;
   manuallyPlaced: boolean;
   phase: number;
+  /** The opacity this node was built with, so focus dimming is reversible. */
+  baseOpacity: number;
+  /** Eased 1 → DIMMED_FACTOR, so focus fades in rather than snapping. */
+  dim?: number;
 };
 
 type EdgeRecord = {
@@ -29,10 +33,16 @@ type EdgeRecord = {
   target: NodeRecord;
   line: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   pulse: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
+  baseOpacity: number;
+  dim?: number;
   phase: number;
   strands: number;
   segmentStep: number;
 };
+
+// How far unrelated nodes recede when one is selected. Enough to read the connected set at a
+// glance, not so far that the rest of the graph disappears and loses its shape.
+const DIMMED_FACTOR = 0.18;
 
 type SceneApi = {
   zoomIn: () => void;
@@ -55,7 +65,7 @@ export default function MemoryGraph({
   nodes: MemoryGraphNode[];
   edges: MemoryGraphEdge[];
   selectedId: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
   onDelete: (id: string) => void;
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -307,6 +317,7 @@ export default function MemoryGraph({
         mesh.add(halo);
         graphGroup.add(mesh);
         nodeRecords.set(data.id, {
+          baseOpacity: mesh.material.opacity,
           data,
           mesh,
           halo,
@@ -366,6 +377,8 @@ export default function MemoryGraph({
           target,
           line,
           pulse,
+          // The opacity this edge was designed with, so fading is reversible rather than cumulative.
+          baseOpacity: (line.material as THREE.LineBasicMaterial).opacity,
           phase: (hashString(edge.id) % 1000) / 1000,
           strands,
           segmentStep,
@@ -453,6 +466,8 @@ export default function MemoryGraph({
     const curveControl = new THREE.Vector3();
     const curve = new THREE.QuadraticBezierCurve3();
     const nodeScale = new THREE.Vector3();
+    // Reused each frame rather than reallocated: this runs at animation rate.
+    const focusedIds = new Set<string>();
     const edgeMiddle = new THREE.Vector3();
     const edgeDirection = new THREE.Vector3();
     const edgeNormal = new THREE.Vector3();
@@ -481,16 +496,34 @@ export default function MemoryGraph({
       tickClusterLayout(nodeRecords, edgeRecords, deltaSeconds, reducedMotion);
 
       const selected = propsRef.current.selectedId;
+      // Which nodes the selected one actually touches. Rebuilt per frame because edges are live:
+      // a connection created or archived while the graph is open changes the answer immediately.
+      focusedIds.clear();
+      if (selected) {
+        focusedIds.add(selected);
+        for (const edge of edgeRecords) {
+          if (edge.source.data.id === selected) focusedIds.add(edge.target.data.id);
+          else if (edge.target.data.id === selected) focusedIds.add(edge.source.data.id);
+        }
+      }
+      const hasFocus = focusedIds.size > 1;
+
       for (const record of nodeRecords.values()) {
         const isSelected = record.data.id === selected;
+        // Dim only when the selection actually has neighbours; an isolated node would otherwise
+        // fade the entire graph and leave nothing to read.
+        const dimmed = hasFocus && !focusedIds.has(record.data.id);
+        const targetDim = dimmed ? DIMMED_FACTOR : 1;
+        record.dim = record.dim === undefined ? targetDim : record.dim + (targetDim - record.dim) * 0.14;
         const pulse = reducedMotion ? 1 : 1 + Math.sin(now * 0.0014 + record.phase) * 0.045;
         const targetScale = (isSelected ? 1.14 : 1) * pulse;
         record.mesh.scale.lerp(nodeScale.setScalar(targetScale), 0.12);
         const superseded = record.data.memoryState === "superseded";
-        record.mesh.material.emissiveIntensity = superseded
-          ? (isSelected ? 1.2 : 0.7)
-          : (isSelected ? 2.6 : 1.55);
-        record.halo.material.opacity = superseded ? (isSelected ? 0.5 : 0.24) : (isSelected ? 0.92 : 0.6);
+        record.mesh.material.emissiveIntensity =
+          (superseded ? (isSelected ? 1.2 : 0.7) : (isSelected ? 2.6 : 1.55)) * record.dim;
+        record.mesh.material.opacity = record.baseOpacity * record.dim;
+        record.halo.material.opacity =
+          (superseded ? (isSelected ? 0.5 : 0.24) : (isSelected ? 0.92 : 0.6)) * record.dim;
       }
 
       if (filaments) {
@@ -509,6 +542,14 @@ export default function MemoryGraph({
       }
 
       for (const edge of edgeRecords) {
+        // An edge is part of the focus only if the selected node is one of its ends.
+        const edgeDimmed =
+          hasFocus && edge.source.data.id !== selected && edge.target.data.id !== selected;
+        const edgeTargetDim = edgeDimmed ? DIMMED_FACTOR : 1;
+        edge.dim = edge.dim === undefined ? edgeTargetDim : edge.dim + (edgeTargetDim - edge.dim) * 0.14;
+        edge.line.material.opacity = edge.baseOpacity * edge.dim;
+        edge.pulse.material.opacity = edge.dim;
+        edge.pulse.material.transparent = true;
         edgeMiddle.copy(edge.source.mesh.position).add(edge.target.mesh.position).multiplyScalar(0.5);
         curveControl.copy(edgeMiddle).multiplyScalar(1.34);
         curve.v0.copy(edge.source.mesh.position);
@@ -643,6 +684,27 @@ export default function MemoryGraph({
         y: THREE.MathUtils.clamp(event.clientY - bounds.top, 10, bounds.height - 150),
       });
     };
+    // Clicking empty space clears the selection, which un-dims the whole graph.
+    //
+    // The canvas is also the orbit control's surface, so a drag to rotate the view must not count
+    // as a click. Distance and duration since pointerdown separate the two: a rotate moves the
+    // pointer, a click does not.
+    let pressAt: { x: number; y: number; at: number } | null = null;
+    const rememberPress = (event: PointerEvent) => {
+      pressAt = { x: event.clientX, y: event.clientY, at: performance.now() };
+    };
+    const clearSelectionOnEmptyClick = (event: PointerEvent) => {
+      const press = pressAt;
+      pressAt = null;
+      if (!press || event.button !== 0) return;
+      const moved = Math.hypot(event.clientX - press.x, event.clientY - press.y);
+      if (moved > 6 || performance.now() - press.at > 500) return;
+      if (pickNode(event.clientX, event.clientY)) return;
+      setContextMenu(null);
+      if (propsRef.current.selectedId) propsRef.current.onSelect(null);
+    };
+    renderer.domElement.addEventListener("pointerdown", rememberPress);
+    renderer.domElement.addEventListener("pointerup", clearSelectionOnEmptyClick);
     renderer.domElement.addEventListener("contextmenu", openNodeContextMenu);
 
     const onContextLost = (event: Event) => {
@@ -657,6 +719,8 @@ export default function MemoryGraph({
       resizeObserver.disconnect();
       visibilityObserver.disconnect();
       renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
+      renderer.domElement.removeEventListener("pointerdown", rememberPress);
+      renderer.domElement.removeEventListener("pointerup", clearSelectionOnEmptyClick);
       renderer.domElement.removeEventListener("contextmenu", openNodeContextMenu);
       renderer.domElement.removeEventListener("pointermove", updateLabelFocus);
       renderer.domElement.removeEventListener("wheel", updateLabelFocus);

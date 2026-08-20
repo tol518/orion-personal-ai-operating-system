@@ -42,7 +42,7 @@ test("the prompt demands LinkedIn, Indeed, and first-party passes with a stated 
   const result = await service.discover({ profile: { query: "Software engineer" }, cv: null });
 
   assert.match(prompt, /separate public-web discovery passes for LinkedIn Jobs, for Indeed, and for first-party/);
-  assert.match(prompt, /Black Noir, the job-discovery specialist delegated by J\.A\.R\.V\.I\.S\./);
+  assert.match(prompt, /J\.A\.R\.V\.I\.S\., the main orchestrator responsible for job discovery/);
   assert.match(prompt, /Report a status for every required source/);
   assert.match(prompt, /do not automate a signed-in LinkedIn or Indeed session/);
   assert.deepEqual(
@@ -52,20 +52,20 @@ test("the prompt demands LinkedIn, Indeed, and first-party passes with a stated 
     [
       {
         method: "sessions.create",
-        key: "agent:black-noir:dashboard:hunting-job-discovery",
-        agentId: "black-noir",
+        key: "agent:main:dashboard:hunting-job-discovery",
+        agentId: "main",
         model: "openai/gpt-5.6-luna",
       },
       {
         method: "sessions.reset",
-        key: "agent:black-noir:dashboard:hunting-job-discovery",
-        agentId: "black-noir",
+        key: "agent:main:dashboard:hunting-job-discovery",
+        agentId: "main",
         model: undefined,
       },
       {
         method: "sessions.patch",
-        key: "agent:black-noir:dashboard:hunting-job-discovery",
-        agentId: "black-noir",
+        key: "agent:main:dashboard:hunting-job-discovery",
+        agentId: "main",
         model: "openai/gpt-5.6-luna",
       },
     ],
@@ -81,13 +81,13 @@ test("the prompt demands LinkedIn, Indeed, and first-party passes with a stated 
     [
       {
         method: "chat.abort",
-        sessionKey: "agent:black-noir:dashboard:hunting-job-discovery",
-        agentId: "black-noir",
+        sessionKey: "agent:main:dashboard:hunting-job-discovery",
+        agentId: "main",
       },
       {
         method: "chat.send",
-        sessionKey: "agent:black-noir:dashboard:hunting-job-discovery",
-        agentId: "black-noir",
+        sessionKey: "agent:main:dashboard:hunting-job-discovery",
+        agentId: "main",
       },
     ],
   );

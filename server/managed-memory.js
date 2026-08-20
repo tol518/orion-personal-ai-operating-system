@@ -1,4 +1,7 @@
 const MANAGED_TYPES = new Set(["agent_instruction", "project", "shared_lesson"]);
+export const EXTRACTION_MEMORY_TAG = "extraction-related";
+export const BLACK_NOIR_AGENT_ID = "black-noir";
+const PERSON_MEMORY_TAGS = new Set(["person", "people", "identity"]);
 const WORD = /[a-z0-9]+/g;
 const STOP_WORDS = new Set([
   "agent", "agents", "and", "for", "from", "into", "project", "responsibilities",
@@ -40,6 +43,7 @@ export function normalizeManagedUpsert(raw, actorAgentId = "main") {
   if (!raw || typeof raw !== "object") return null;
   const memoryType = text(raw.memoryType ?? raw.memory_type);
   if (!MANAGED_TYPES.has(memoryType)) return null;
+  if (actorAgentId === BLACK_NOIR_AGENT_ID && memoryType !== "shared_lesson") return null;
   const title = text(raw.title).slice(0, 120);
   const bodyLimit = memoryType === "shared_lesson" ? 8_000 : 20_000;
   const body = String(raw.body ?? "").trim().slice(0, bodyLimit);
@@ -53,8 +57,9 @@ export function normalizeManagedUpsert(raw, actorAgentId = "main") {
     return null;
   }
   if (memoryType === "shared_lesson" && !isStructuredLesson(body)) return null;
+  const actorTags = actorAgentId === BLACK_NOIR_AGENT_ID ? [EXTRACTION_MEMORY_TAG] : [];
   const tags = memoryType === "shared_lesson"
-    ? [...new Set(["shared-lesson", "procedural-memory", `learned-by:${actorAgentId}`, ...stringList(raw.tags)])].slice(0, 20)
+    ? [...new Set(["shared-lesson", "procedural-memory", `learned-by:${actorAgentId}`, ...actorTags, ...stringList(raw.tags)])].slice(0, 20)
     : stringList(raw.tags);
   return {
     memoryType,
@@ -63,6 +68,18 @@ export function normalizeManagedUpsert(raw, actorAgentId = "main") {
     body,
     tags,
   };
+}
+
+function normalizedTags(memory) {
+  return new Set((memory?.tags ?? []).map((tag) => text(tag).toLowerCase()).filter(Boolean));
+}
+
+export function canAgentReadMemory(memory, agentId) {
+  if (agentId !== BLACK_NOIR_AGENT_ID) return true;
+  if (memory?.memoryType === "agent_instruction") return memory.managedKey === BLACK_NOIR_AGENT_ID;
+  const tags = normalizedTags(memory);
+  if (tags.has(EXTRACTION_MEMORY_TAG)) return true;
+  return [...PERSON_MEMORY_TAGS].some((tag) => tags.has(tag));
 }
 
 export function shouldLinkInstructionToProject(instruction, project) {
@@ -103,10 +120,11 @@ function lessonAuthorIds(lesson) {
 export function contextForAgent(memories, agentId, relevant = []) {
   const trusted = memories.filter(
     (memory) =>
-      memory.memoryType === "project" ||
+      (memory.memoryType === "project" && canAgentReadMemory(memory, agentId)) ||
       (memory.memoryType === "agent_instruction" && (agentId === "main" || memory.managedKey === agentId)),
   );
-  const merged = new Map([...trusted, ...relevant].map((memory) => [memory.id, memory]));
+  const readableRelevant = relevant.filter((memory) => canAgentReadMemory(memory, agentId));
+  const merged = new Map([...trusted, ...readableRelevant].map((memory) => [memory.id, memory]));
   return [...merged.values()];
 }
 

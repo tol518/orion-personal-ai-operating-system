@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  canAgentReadMemory,
   contextForAgent,
+  EXTRACTION_MEMORY_TAG,
   ManagedMemoryService,
   normalizeManagedUpsert,
   shouldLinkInstructionToProject,
@@ -62,12 +64,28 @@ test("required shared lesson tags cannot be crowded out", () => {
     tags: Array.from({ length: 20 }, (_, index) => `custom-${index}`),
   }, "black-noir");
 
-  assert.deepEqual(lesson?.tags.slice(0, 3), [
+  assert.deepEqual(lesson?.tags.slice(0, 4), [
     "shared-lesson",
     "procedural-memory",
     "learned-by:black-noir",
+    EXTRACTION_MEMORY_TAG,
   ]);
   assert.equal(lesson?.tags.length, 20);
+});
+
+test("Black Noir can only write extraction shared lessons", () => {
+  assert.equal(normalizeManagedUpsert({
+    memoryType: "project",
+    managedKey: "other-project",
+    title: "Other project",
+    body: "Unrelated work",
+  }, "black-noir"), null);
+  assert.equal(normalizeManagedUpsert({
+    memoryType: "agent_instruction",
+    managedKey: "black-noir",
+    title: "Black Noir",
+    body: "Broaden the role",
+  }, "black-noir"), null);
 });
 
 test("an agent cannot rewrite another agent instruction", () => {
@@ -132,6 +150,31 @@ test("relevant shared lessons flow to existing and future agents", () => {
     contextForAgent(memories, "new-agent-without-custom-code", [lesson]).map(({ id }) => id),
     ["p", "lesson"],
   );
+});
+
+test("Black Noir receives only extraction and person memories", () => {
+  const memories = [
+    { id: "jarvis-project", memoryType: "project", managedKey: "jarvis", tags: ["project", "jarvis"] },
+    { id: "extraction-project", memoryType: "project", managedKey: "extraction", tags: ["project", EXTRACTION_MEMORY_TAG] },
+    { id: "main", memoryType: "agent_instruction", managedKey: "main", tags: ["agent"] },
+    { id: "black-noir", memoryType: "agent_instruction", managedKey: "black-noir", tags: ["agent"] },
+  ];
+  const relevant = [
+    { id: "hunting", memoryType: "shared_lesson", tags: ["hunting"] },
+    { id: "extract", memoryType: "shared_lesson", tags: [EXTRACTION_MEMORY_TAG] },
+    { id: "person", memoryType: "general", tags: ["person"] },
+    { id: "preference", memoryType: "general", tags: ["preference"] },
+  ];
+
+  assert.deepEqual(
+    contextForAgent(memories, "black-noir", relevant).map(({ id }) => id),
+    ["extraction-project", "black-noir", "extract", "person"],
+  );
+  assert.equal(canAgentReadMemory(relevant[0], "black-noir"), false);
+  assert.equal(canAgentReadMemory(relevant[1], "black-noir"), true);
+  assert.equal(canAgentReadMemory(relevant[2], "black-noir"), true);
+  assert.equal(canAgentReadMemory(relevant[3], "black-noir"), false);
+  assert.equal(canAgentReadMemory(relevant[0], "main"), true);
 });
 
 test("a second agent improves the same shared lesson instead of duplicating it", async () => {

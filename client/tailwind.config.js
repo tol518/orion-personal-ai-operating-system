@@ -1,19 +1,18 @@
 /** @type {import('tailwindcss').Config} */
-// Jarvis HUD palette ported from the reference dashboard: deep blue-black
-// surfaces that brighten with elevation, plus CSS-var-backed accent/border
-// (JARVIS cyan) so the accent can be themed from one place.
+// ORION celestial palette: near-black space, midnight navy elevation, and
+// CSS-var-backed silver-blue starlight accents.
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
         surface: {
-          0: "#020609",
-          1: "#040b14",
-          2: "#08121f",
-          3: "#0b1a2b",
-          4: "#102338",
-          5: "#162e47",
+          0: "#01040a",
+          1: "#030813",
+          2: "#070e1d",
+          3: "#0a1528",
+          4: "#10203a",
+          5: "#172d4d",
         },
         accent: {
           DEFAULT: "rgb(var(--hud-accent) / <alpha-value>)",

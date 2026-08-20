@@ -2,7 +2,7 @@ import { parseJsonObject } from "./cv-editor-service.js";
 import { isFirstPartyFamily, normalizeJob } from "./job-hunt-store.js";
 import { abortSessionRun, runSessionTurn } from "./session-turn.js";
 
-const DISCOVERY_AGENT_ID = "black-noir";
+const DISCOVERY_AGENT_ID = "main";
 const DISCOVERY_MODEL = "openai/gpt-5.6-luna";
 const DISCOVERY_SESSION_KEY = `agent:${DISCOVERY_AGENT_ID}:dashboard:hunting-job-discovery`;
 // A run browses LinkedIn, Indeed, and first-party sites through a Codex-routed model. A
@@ -56,7 +56,7 @@ export class JobDiscoveryService {
     await this.gateway.request("sessions.create", {
       key: this.sessionKey,
       agentId: DISCOVERY_AGENT_ID,
-      label: "Hunting · Job Discovery · Black Noir",
+      label: "Hunting · Job Discovery · J.A.R.V.I.S.",
       model: DISCOVERY_MODEL,
     });
     await this.gateway.request("sessions.reset", {
@@ -85,7 +85,7 @@ export class JobDiscoveryService {
 
 export function buildDiscoveryPrompt({ profile, cv, exclusions }) {
   return [
-    "You are Black Noir, the job-discovery specialist delegated by J.A.R.V.I.S., the main orchestrator.",
+    "You are J.A.R.V.I.S., the main orchestrator responsible for job discovery in Hunting.",
     "Search current public job listings on first-party company career sites and reputable boards.",
     "Make separate public-web discovery passes for LinkedIn Jobs, for Indeed, and for first-party company career sites. Use public listing URLs or search-engine results; do not automate a signed-in LinkedIn or Indeed session.",
     "Report a status for every required source in sourceStatus. If LinkedIn, Indeed, or first-party sites returned nothing usable, say so with the concrete reason (blocked, sign-in wall, no qualifying match, search failed).",

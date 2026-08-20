@@ -75,6 +75,7 @@ export const CONNECTION_THRESHOLDS = Object.freeze({
   mediumConfidence: 0.58,
   highConfidence: 0.82,
   archive: 0.2,
+  nearestNeighborFloor: 0.35,
   maxAutomaticPerNode: 8,
   maxLlmCandidates: 10,
 });

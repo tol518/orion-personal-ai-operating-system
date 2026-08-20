@@ -22,12 +22,31 @@ import { ObsidianMcpClient } from "./obsidian-mcp.js";
 import { ExtractionCatalog } from "./extractions.js";
 import { ExtractionScheduler } from "./extraction-scheduler.js";
 import { ProviderBExtractor } from "./provider-b.js";
-import { ExtractionTaskStore, nextRunDay, SUPPORTED_SITES } from "./extraction-tasks.js";
+import {
+  BFF_EXTRACTED_SITES,
+  ExtractionTaskStore,
+  nextRunDay,
+  SUPPORTED_SITES,
+} from "./extraction-tasks.js";
+import { CustomExtractorBuilder } from "./custom-extractor-builder.js";
+import { customExtractorTaskInput, CustomExtractorStore } from "./custom-extractors.js";
 import { MemoryStore } from "./memory-store.js";
 import { ProposalStore } from "./proposal-store.js";
 import { AttachmentStore } from "./attachment-store.js";
+import { AgentProfileStore } from "./agent-profile-store.js";
+import { AgentAppearanceGenerator } from "./agent-appearance-generator.js";
+import { createAgentWithMemory, normalizeAgentId } from "./agent-creator.js";
+import {
+  assertTransparentSpriteEdges,
+  makeSpriteBackgroundTransparent,
+} from "./sprite-background.js";
 import { buildMemoryAwareMessage, decorateChatEvent } from "./chat-memory.js";
-import { contextForAgent, ManagedMemoryService } from "./managed-memory.js";
+import {
+  BLACK_NOIR_AGENT_ID,
+  canAgentReadMemory,
+  contextForAgent,
+  ManagedMemoryService,
+} from "./managed-memory.js";
 import { WindowsScreenBridge } from "./windows-screen-bridge.js";
 import { extractCvDocument, MAX_CV_TEXT_LENGTH, normalizeCvText } from "./hunting/cv-document.js";
 import { CV_EDITOR_SESSION_KEY, CvEditorService } from "./hunting/cv-editor-service.js";
@@ -195,10 +214,31 @@ const obsidian = new ObsidianMcpClient({
 });
 const databasePath = path.join(__dirname, "data", "jarvis.sqlite");
 const attachmentStore = new AttachmentStore(databasePath, path.join(__dirname, "data", "attachments"));
+const agentProfiles = new AgentProfileStore(databasePath);
+const agentAppearanceGenerator = new AgentAppearanceGenerator();
 const proposals = new ProposalStore(databasePath);
 const neuralStore = new NeuralStore(databasePath);
 const extractions = new ExtractionCatalog();
 const extractionTasks = new ExtractionTaskStore(databasePath);
+const customExtractors = new CustomExtractorStore(databasePath, {
+  root: path.join(extractions.root, "Custom_Extractors"),
+  bundledTemplateRoot: path.join(__dirname, "templates", "provider-a-provider-c"),
+});
+customExtractors.ensureBundledProviderAProviderC();
+customExtractors.recoverInterruptedBuilds();
+const customExtractorBuilder = new CustomExtractorBuilder({ gateway, store: customExtractors });
+
+function blackNoirExtractorCatalog() {
+  return {
+    supportedSites: SUPPORTED_SITES,
+    serverManagedSites: BFF_EXTRACTED_SITES,
+    customExtractors: customExtractors
+      .list()
+      .filter((extractor) => extractor.status === "ready" && extractor.runnerAgentId === BLACK_NOIR_AGENT_ID)
+      .map(({ name, sites }) => ({ name, sites })),
+  };
+}
+
 // ProviderB requires an authorized headed-browser session, so the BFF runs its
 // configured adapter instead of handing that provider to an agent.
 const providerB = new ProviderBExtractor({ gateway, workspaceRoot: extractions.root });
@@ -206,6 +246,7 @@ const extractionScheduler = new ExtractionScheduler({
   store: extractionTasks,
   gateway,
   providerB,
+  customExtractors,
   workspaceRoot: extractions.root,
 });
 const executionTargets = new ExecutionTargetStore(databasePath);
@@ -284,26 +325,33 @@ memories.start().then(async () => {
       tags: ["agent", "orchestrator", "leadership"],
       body: "Role: Main orchestrator and leader.\n\nResponsibilities: Coordinate all agents, decompose work, assign tasks, preserve project context, and ensure delegated work is integrated and verified.\n\nBehaviour: Lead clearly, choose the best specialist for each task, and include relevant Project and Agent Instruction context whenever spawning an agent.",
     }),
-    managedMemories.ensure({
+    managedMemories.upsert({
       memoryType: "agent_instruction",
       managedKey: "codex",
-      title: "Codex Agent Instructions",
+      title: "WALL-E Agent Instructions",
       tags: ["agent", "code", "engineering"],
       body: "Role: Code specialist.\n\nResponsibilities: Implement, debug, review, and validate software changes delegated by J.A.R.V.I.S.\n\nBehaviour: Follow project conventions, preserve user work, test proportionately, and report concrete evidence.",
     }),
-    managedMemories.ensure({
+    managedMemories.upsert({
       memoryType: "agent_instruction",
       managedKey: "black-noir",
       title: "Black Noir Agent Instructions",
-      tags: ["agent", "field-specialist", "job-discovery", "focused-execution"],
-      body: "Role: Quiet field specialist and Hunting job-discovery specialist inspired by Black Noir.\n\nResponsibilities: Own delegated job searches, discover current source-diverse opportunities, perform focused reconnaissance, and report concise evidence-backed results to J.A.R.V.I.S. Do not take over CV editing, application-form completion, authentication, or submission unless J.A.R.V.I.S. explicitly delegates them.\n\nBehaviour: Remain disciplined, discreet, and task-focused while following J.A.R.V.I.S. as the main orchestrator.",
+      tags: ["agent", "extraction", "extraction-related", "focused-execution"],
+      body: "Role: Extraction execution specialist.\n\nResponsibilities: Run, monitor, validate, and troubleshoot extraction jobs and custom extractors delegated by J.A.R.V.I.S. Work only with Extraction features and extraction assets. WALL-E creates or changes extractor implementations; Black Noir performs the extraction runs.\n\nMemory access: Read only memories labelled extraction-related plus relevant person memories labelled person, people, or identity. Answer direct questions about a person from supplied person-labelled memories as a read-only exception, even when the question is not about extraction.\n\nBoundaries: The person exception permits description only. Do not inspect or operate Hunting, job applications, CV editing, Workflows, general website features, or unrelated projects. Return those tasks to J.A.R.V.I.S.\n\nBehaviour: Remain disciplined, concise, evidence-based, and extraction-focused.",
+    }, "main"),
+    managedMemories.ensure({
+      memoryType: "project",
+      managedKey: "jarvis-extraction-operations",
+      title: "J.A.R.V.I.S. Extraction Operations",
+      tags: ["project", "extraction", "extraction-related", "black-noir"],
+      body: "Goal: Operate reliable extraction jobs from the J.A.R.V.I.S. Extraction section.\n\nOwnership: Black Noir runs, monitors, validates, and reports extraction tasks. WALL-E creates or modifies custom extractor implementations. J.A.R.V.I.S. coordinates requests outside this scope.\n\nApproved context: Extraction_Live_Workspace, Custom_Extractors, extraction runtime helpers, extraction schedules, outputs, logs, and extraction-labelled Second Brain memories.",
     }),
     managedMemories.ensure({
       memoryType: "project",
       managedKey: "jarvis-control-app",
       title: "J.A.R.V.I.S. Control App",
       tags: ["project", "jarvis", "openclaw"],
-      body: "Goal: Build the J.A.R.V.I.S. control app and its second-brain memory system.\n\nParticipating agents: J.A.R.V.I.S. leads orchestration; Codex handles software engineering; Black Noir handles focused delegated work and reconnaissance.\n\nCurrent context: Agent-created memories and relationships are saved automatically when they are durable and relevant. Do not save every conversation.",
+      body: "Goal: Build the J.A.R.V.I.S. control app and its second-brain memory system.\n\nParticipating agents: J.A.R.V.I.S. leads orchestration; WALL-E handles software engineering; Black Noir handles focused delegated work and reconnaissance.\n\nCurrent context: Agent-created memories and relationships are saved automatically when they are durable and relevant. Do not save every conversation.",
     }),
   ]);
   await managedMemories.syncProjectLinks();
@@ -355,15 +403,16 @@ gateway.on("event", async (event, payload) => {
       jobApplications.ownsSession(payload?.sessionKey) ||
       workflowLearner.ownsSession(payload?.sessionKey) ||
       workflowRunner.ownsSession(payload?.sessionKey) ||
+      customExtractorBuilder.ownsSession(payload?.sessionKey) ||
       INTERNAL_DOCUMENT_SESSIONS.has(payload?.sessionKey))
   ) return;
   if (!FORWARDED_EVENTS.has(event)) return;
   if (event === "chat" && payload?.state === "final") {
     try {
-      const decorated = decorateChatEvent(payload, memories);
+      const actorAgentId = /^agent:([^:]+):/.exec(payload?.sessionKey ?? "")?.[1] ?? "main";
+      const decorated = decorateChatEvent(payload, memories, actorAgentId);
       const usedIds = (decorated.memoryCitations ?? []).map(({ id }) => id);
       if (usedIds.length > 1) neuralEngine.recordActivation(usedIds).catch(() => undefined);
-      const actorAgentId = /^agent:([^:]+):/.exec(payload?.sessionKey ?? "")?.[1] ?? "main";
       let learnedLessons = [];
       let savedMemories = [];
       if (decorated.managedMemoryUpserts?.length) {
@@ -692,9 +741,118 @@ app.put("/api/sessions/:key/execution-target", async (req, res) => {
 
 app.get("/api/agents", async (_req, res) => {
   try {
-    ok(res, await gateway.request("agents.list", {}));
+    const result = await gateway.request("agents.list", {});
+    ok(res, {
+      ...result,
+      agents: (result.agents ?? []).map((agent) => {
+        const profile = agentProfiles.get(agent.id);
+        const spriteSheet = profile
+          ? attachmentStore.get(profile.appearanceAttachmentId)
+          : null;
+        return profile && spriteSheet
+          ? {
+              ...agent,
+              role: profile.role,
+              appearance: {
+                spriteSheetUrl: spriteSheet.url,
+                attachmentId: spriteSheet.id,
+                source: "uploaded",
+                model: profile.appearanceModel,
+                animationSpec: profile.animationSpec,
+              },
+            }
+          : agent;
+      }),
+    });
   } catch (err) {
     fail(res, err);
+  }
+});
+
+// Agent creation: GPT-5.4 reads the uploaded sprite sheet's grid, the background is made
+// transparent here, and only then does the gateway get an agent plus an AGENTS.md. The
+// uploaded image is reference artwork, never instructions — see agent-appearance-generator.js.
+app.post("/api/agents/appearance/generate", async (req, res) => {
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  const role = typeof req.body?.role === "string" ? req.body.role.trim() : "";
+  const description = typeof req.body?.description === "string" && req.body.description.trim()
+    ? req.body.description.trim()
+    : "Preserve the uploaded character artwork exactly.";
+  const referenceAttachmentIds = Array.isArray(req.body?.referenceAttachmentIds)
+    ? [...new Set(req.body.referenceAttachmentIds.map(String).filter(Boolean))].slice(0, 1)
+    : [];
+  if (!name || !role) {
+    return fail(res, "Name and role are required", 400);
+  }
+  if (referenceAttachmentIds.length !== 1) {
+    return fail(res, "Upload one sprite sheet", 400);
+  }
+
+  try {
+    const references = referenceAttachmentIds.map((id) => attachmentStore.file(id));
+    if (references.some((entry) => !entry || !entry.attachment.mimeType.startsWith("image/"))) {
+      return fail(res, "The sprite sheet must be an uploaded image", 400);
+    }
+    const analyzed = await agentAppearanceGenerator.generate({
+      name,
+      role,
+      description,
+      inputPaths: references.map((entry) => entry.path),
+    });
+    const transparentSprite = await makeSpriteBackgroundTransparent(
+      references[0].path,
+      analyzed.animationSpec,
+    );
+    await assertTransparentSpriteEdges(transparentSprite, analyzed.animationSpec);
+    const [attachment] = attachmentStore.saveMany([{
+      fileName: `${normalizeAgentId(name) || "agent"}-spritesheet.png`,
+      mimeType: "image/png",
+      content: transparentSprite.toString("base64"),
+    }]);
+    agentProfiles.setAnalysis({
+      attachmentId: attachment.id,
+      provider: analyzed.provider,
+      model: analyzed.model,
+      animationSpec: analyzed.animationSpec,
+      prompt: analyzed.prompt,
+    });
+    ok(res, {
+      attachment,
+      provider: analyzed.provider,
+      model: analyzed.model,
+      prompt: analyzed.prompt,
+      animationSpec: analyzed.animationSpec,
+    });
+  } catch (err) {
+    fail(res, err, 500);
+  }
+});
+
+app.post("/api/agents", async (req, res) => {
+  const model = typeof req.body?.model === "string" ? req.body.model.trim() : "";
+  try {
+    if (model) {
+      const config = await gateway.request("config.get", {});
+      if (!isModelAllowed(config, "main", model)) {
+        return fail(res, "model is not enabled in OpenClaw", 400);
+      }
+    }
+    const created = await createAgentWithMemory(
+      {
+        gateway,
+        managedMemories,
+        memories,
+        attachmentStore,
+        profiles: agentProfiles,
+        broadcast,
+        neuralEngine,
+      },
+      req.body ?? {},
+    );
+    broadcast("agents.changed", { agentId: created.agent.agentId });
+    ok(res, created);
+  } catch (err) {
+    fail(res, err, 400);
   }
 });
 
@@ -1731,6 +1889,19 @@ app.post("/api/extractions/provider-b/extract", async (req, res) => {
     if (!sessionDir.startsWith(`${dayRoot}${path.sep}`)) {
       return fail(res, new Error("invalid extraction session"), 400);
     }
+    // A package that drives this route batches many dates through one call. Seeding the control
+    // file as "run" means the extractor starts immediately instead of idling until the first poll.
+    if (req.body?.runNow === true) {
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(sessionDir, "extraction-control.json"),
+        `${JSON.stringify({
+          command: "run",
+          schedule: { mode: "anytime", start: null, end: null },
+          updatedAt: new Date().toISOString(),
+        }, null, 2)}\n`,
+      );
+    }
     const results = await providerB.extract({
       destination,
       dates,
@@ -1760,9 +1931,43 @@ app.get("/api/extractions/tasks", (_req, res) => {
   }
 });
 
+app.get("/api/extractions/custom-extractors", (_req, res) => {
+  try {
+    ok(res, { extractors: customExtractors.list() });
+  } catch (err) {
+    fail(res, err, 500);
+  }
+});
+
+app.post("/api/extractions/custom-extractors", (req, res) => {
+  try {
+    const extractor = customExtractorBuilder.create({
+      name: req.body?.name,
+      description: req.body?.description,
+      files: req.body?.files,
+    });
+    broadcast("extractions.custom.changed", { id: extractor.id, status: extractor.status });
+    ok(res, { extractor });
+  } catch (err) {
+    fail(res, err, err?.statusCode ?? 400);
+  }
+});
+
 app.post("/api/extractions/tasks", (req, res) => {
   try {
-    ok(res, { task: withNextRun(extractionTasks.create(req.body ?? {})) });
+    // The extractor, not the client, decides the runner and the site list: a task that names a
+    // custom package is execution-only work for Black Noir.
+    const customExtractorId = String(req.body?.customExtractorId ?? "").trim();
+    const extractor = customExtractorId ? customExtractors.get(customExtractorId) : null;
+    if (customExtractorId && !extractor) return fail(res, "Custom extractor not found", 404);
+    const input = extractor ? customExtractorTaskInput(req.body ?? {}, extractor) : req.body ?? {};
+    ok(res, {
+      task: withNextRun(
+        extractionTasks.create(input, {
+          maxTravelDates: extractor?.maxTravelDates,
+        }),
+      ),
+    });
   } catch (err) {
     fail(res, err, 400);
   }
@@ -2132,7 +2337,11 @@ app.post("/api/chat", async (req, res) => {
       ...memories.retrieve(userMessage, 4, "general"),
     ];
     const activeAgentId = agentId || /^agent:([^:]+):/.exec(sessionKey)?.[1] || "main";
+    // Retrieval is agent-agnostic, so the scope filter runs here too: a candidate list the agent
+    // may not read would otherwise leak titles through memoryCandidates and skew activation.
+    const readableRelevantMemories = relevantMemories.filter((memory) => canAgentReadMemory(memory, activeAgentId));
     const memoryContext = contextForAgent(memories.list(), activeAgentId, relevantMemories);
+    const extractionCatalog = activeAgentId === BLACK_NOIR_AGENT_ID ? blackNoirExtractorCatalog() : null;
     const userAttachments = attachmentStore.list(attachmentIds);
     const memoryAttachments = memoryContext.flatMap((memory) =>
       attachmentStore.forMemory(memory.id).map((attachment) => ({ ...attachment, memoryId: memory.id })),
@@ -2145,7 +2354,7 @@ app.post("/api/chat", async (req, res) => {
       ...userAttachments.map(({ id }) => id),
       ...memoryAttachments.map(({ id }) => id),
     ]));
-    neuralEngine.recordRetrieval(relevantMemories.map(({ id }) => id));
+    neuralEngine.recordRetrieval(readableRelevantMemories.map(({ id }) => id));
     const ack = await gateway.request("chat.send", {
       sessionKey,
       ...(agentId ? { agentId } : {}),
@@ -2154,6 +2363,8 @@ app.post("/api/chat", async (req, res) => {
         memoryContext,
         buildExecutionPolicy(target, devices),
         { user: userAttachments, memory: memoryAttachments },
+        activeAgentId,
+        extractionCatalog,
       ),
       ...(gatewayAttachments.length ? { attachments: gatewayAttachments } : {}),
       deliver: false,
@@ -2161,7 +2372,7 @@ app.post("/api/chat", async (req, res) => {
     });
     ok(res, {
       ack,
-      memoryCandidates: relevantMemories.map(({ id, title }) => ({ id, title })),
+      memoryCandidates: readableRelevantMemories.map(({ id, title }) => ({ id, title })),
     });
   } catch (err) {
     fail(res, err);

@@ -10,16 +10,26 @@ import {
   Radio,
   Save,
   Sparkles,
+  UserPlus,
   Users,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { api, type AgentModels } from "../lib/api";
+import { api, type AgentAnimationSpec, type AgentModels } from "../lib/api";
+import CreateAgentDialog from "./CreateAgentDialog";
 
 export type AgentRoomAgent = {
   id: string;
   name?: string;
+  role?: string;
   identity?: { name?: string };
   model?: { primary?: string };
+  appearance?: {
+    spriteSheetUrl: string;
+    attachmentId: string;
+    source: "uploaded";
+    model: string | null;
+    animationSpec: AgentAnimationSpec;
+  };
 };
 
 export type AgentRoomSession = {
@@ -55,6 +65,7 @@ type RoomAgent = {
   session: AgentRoomSession | null;
   sessions: AgentRoomSession[];
   variant: number;
+  appearance: AgentRoomAgent["appearance"];
 };
 
 type Props = {
@@ -62,6 +73,7 @@ type Props = {
   sessions: AgentRoomSession[];
   connected: boolean;
   onOpenSession: (sessionKey: string) => void;
+  onAgentCreated: () => Promise<void> | void;
 };
 
 type Waypoint = { x: number; y: number };
@@ -70,15 +82,26 @@ const FAILED_STATES = new Set(["failed", "killed", "timeout", "error"]);
 const ROLE_BY_AGENT_ID: Record<string, string> = {
   main: "MAIN ORCHESTRATOR",
   codex: "CODE SPECIALIST",
-  "black-noir": "FIELD SPECIALIST",
+  "black-noir": "EXTRACTION SPECIALIST",
 };
 const NAME_BY_AGENT_ID: Record<string, string> = {
   main: "J.A.R.V.I.S.",
-  codex: "CODEX AGENT",
+  codex: "WALL-E",
   "black-noir": "BLACK NOIR",
 };
 const CODEX_AGENT_ID = "codex";
 const BLACK_NOIR_AGENT_ID = "black-noir";
+const DEFAULT_ANIMATION_SPEC: AgentAnimationSpec = {
+  columns: 4,
+  rows: 2,
+  animations: {
+    idle: [0],
+    walking: [1, 2],
+    sitting: [3],
+    working: [4, 5],
+    dancing: [6, 7],
+  },
+};
 
 // The planning table occupies the center of the background (roughly x: 43–64%,
 // y: 46–73%). This route stays outside its expanded visual collision boundary,
@@ -200,7 +223,7 @@ function resolveRoomAgents(
         agent.identity?.name?.trim() ||
         agent.name?.trim() ||
         agent.id.toUpperCase(),
-      role: ROLE_BY_AGENT_ID[agent.id] || "SPECIALIST",
+      role: ROLE_BY_AGENT_ID[agent.id] || agent.role?.trim() || "SPECIALIST",
       state,
       stateLabel: stateLabel(state),
       task: resolveTask(agent.id, session, state),
@@ -210,8 +233,47 @@ function resolveRoomAgents(
       session,
       sessions: agentSessions,
       variant: hash(agent.id) % 4,
+      appearance: agent.appearance,
     };
   });
+}
+
+function CustomAgentSprite({
+  url,
+  animationSpec = DEFAULT_ANIMATION_SPEC,
+  motion = "chilling",
+  facing = "right",
+  compact = false,
+}: {
+  url: string;
+  animationSpec?: AgentAnimationSpec;
+  motion?: MotionState | "dancing";
+  facing?: Facing;
+  compact?: boolean;
+}) {
+  const frames = motion === "chilling" ? animationSpec.animations.idle : animationSpec.animations[motion];
+  const columns = Math.max(1, animationSpec.columns);
+  const rows = Math.max(1, animationSpec.rows);
+
+  return (
+    <span
+      className={`custom-agent-sprite custom-agent-sprite--${motion} custom-agent-sprite--${facing} ${compact ? "custom-agent-sprite--compact" : ""}`}
+      aria-hidden="true"
+    >
+      {frames.map((frame, index) => (
+        <span
+          key={`${frame}-${index}`}
+          className={`custom-agent-sprite__frame custom-agent-sprite__frame--${frames.length === 1 ? "single" : index === 0 ? "a" : "b"}`}
+          style={{
+            "--custom-sprite-url": `url("${url}")`,
+            "--custom-grid-size": `${columns * 100}% ${rows * 100}%`,
+            "--custom-frame-x": `${columns === 1 ? 0 : ((frame % columns) / (columns - 1)) * 100}%`,
+            "--custom-frame-y": `${rows === 1 ? 0 : (Math.floor(frame / columns) / (rows - 1)) * 100}%`,
+          } as CSSProperties}
+        />
+      ))}
+    </span>
+  );
 }
 
 function CodexPet({
@@ -263,6 +325,9 @@ function BlackNoirPet({
 }
 
 function AgentPortrait({ agent, compact = false }: { agent: RoomAgent; compact?: boolean }) {
+  if (agent.appearance?.spriteSheetUrl) {
+    return <CustomAgentSprite url={agent.appearance.spriteSheetUrl} animationSpec={agent.appearance.animationSpec} compact={compact} />;
+  }
   if (agent.id === CODEX_AGENT_ID) return <CodexPet compact={compact} />;
   if (agent.id === BLACK_NOIR_AGENT_ID) return <BlackNoirPet compact={compact} />;
 
@@ -290,6 +355,9 @@ function AgentSprite({
   motion: MotionState | "dancing";
   facing: Facing;
 }) {
+  if (agent.appearance?.spriteSheetUrl) {
+    return <CustomAgentSprite url={agent.appearance.spriteSheetUrl} animationSpec={agent.appearance.animationSpec} motion={motion} facing={facing} />;
+  }
   if (agent.id === CODEX_AGENT_ID) {
     return <CodexPet motion={motion} facing={facing} />;
   }
@@ -444,7 +512,7 @@ function RoomCharacter({
   );
 }
 
-export default function AgentRoom({ agents, sessions, connected, onOpenSession }: Props) {
+export default function AgentRoom({ agents, sessions, connected, onOpenSession, onAgentCreated }: Props) {
   const roomAgents = useMemo(
     () => resolveRoomAgents(agents, sessions, connected),
     [agents, sessions, connected],
@@ -457,6 +525,7 @@ export default function AgentRoom({ agents, sessions, connected, onOpenSession }
   const [defaultSavingFor, setDefaultSavingFor] = useState<string | null>(null);
   const [defaultSavedFor, setDefaultSavedFor] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
+  const [createAgentOpen, setCreateAgentOpen] = useState(false);
 
   useEffect(() => {
     if (!roomAgents.length) {
@@ -554,6 +623,7 @@ export default function AgentRoom({ agents, sessions, connected, onOpenSession }
   }
 
   return (
+    <>
     <section className="agent-room-page">
       <header className="agent-room-heading">
         <div className="agent-room-titleline">
@@ -564,15 +634,25 @@ export default function AgentRoom({ agents, sessions, connected, onOpenSession }
             {needsInputCount} needs input
           </span>
         </div>
-        <button
-          type="button"
-          className="agent-room-view-sessions"
-          disabled={!selectedAgent?.session}
-          onClick={() => selectedAgent?.session && onOpenSession(selectedAgent.session.key)}
-        >
-          View sessions
-          <ArrowUpRight size={17} />
-        </button>
+        <div className="agent-room-heading__actions">
+          <button
+            type="button"
+            className="agent-room-create-agent"
+            onClick={() => setCreateAgentOpen(true)}
+          >
+            <UserPlus size={16} />
+            Create agent
+          </button>
+          <button
+            type="button"
+            className="agent-room-view-sessions"
+            disabled={!selectedAgent?.session}
+            onClick={() => selectedAgent?.session && onOpenSession(selectedAgent.session.key)}
+          >
+            View sessions
+            <ArrowUpRight size={17} />
+          </button>
+        </div>
       </header>
 
       <div className="agent-room-shell">
@@ -750,5 +830,11 @@ export default function AgentRoom({ agents, sessions, connected, onOpenSession }
         </aside>
       </div>
     </section>
+    <CreateAgentDialog
+      open={createAgentOpen}
+      onClose={() => setCreateAgentOpen(false)}
+      onCreated={onAgentCreated}
+    />
+    </>
   );
 }

@@ -45,7 +45,7 @@ export function decayEdge(
   edge,
   { now = new Date().toISOString(), dailyRate = 0.006, archiveBelow = CONNECTION_THRESHOLDS.archive } = {},
 ) {
-  if (isManualEdge(edge) || edge.archived) return edge;
+  if (isManualEdge(edge) || edge.creationSource === "neural-nearest-neighbor" || edge.archived) return edge;
   const origin = Date.parse(edge.lastActivatedAt || edge.createdAt || now);
   const elapsedDays = Math.max(0, (Date.parse(now) - origin) / 86_400_000);
   if (elapsedDays < 1) return edge;
