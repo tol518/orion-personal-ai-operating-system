@@ -220,10 +220,11 @@ The memory system creates instruction pages for the built-in roles when the vaul
 | J.A.R.V.I.S. (`main`) | Main orchestrator for chat, application workflows, document work, and general delegation. |
 | WALL-E (`codex`) | Software engineering specialist. Implements, debugs, reviews, and validates code, and builds reusable custom extractor packages. |
 | Black Noir (`black-noir`) | Extraction execution specialist and job-discovery specialist. Runs, monitors, and validates extraction tasks, and owns delegated job searches from a dedicated session. |
+| Patrick Bateman | Finance specialist. An operator-created example agent whose mandate lives in its own instruction page, not in the codebase. |
 
-The three built-in pages are operating context, not agent registrations: if the corresponding OpenClaw agent is absent, its instruction page still exists but has nothing to drive.
+The first three pages are built-in operating context, not agent registrations: if the corresponding OpenClaw agent is absent, its instruction page still exists but has nothing to drive. Patrick Bateman is an operator-created example, so it only exists when the operator has created that agent.
 
-Agents beyond those three are created from the dashboard — see [Creating an agent](#creating-an-agent). A created agent arrives with its own workspace, `AGENTS.md`, instruction memory, role label, and animated appearance, and then behaves like any other agent in chat, delegation, and usage attribution.
+Agents beyond the three built-in roles are created from the dashboard — see [Creating an agent](#creating-an-agent). A created agent arrives with its own workspace, `AGENTS.md`, instruction memory, role label, and animated appearance, and then behaves like any other agent in chat, delegation, and usage attribution.
 
 `Patrick Bateman`, a finance specialist agent, is the worked example of that path: created from the Agent Room rather than shipped as a built-in role, with his mandate written in his own instruction page instead of anywhere in this codebase. That separation is the point of the creation flow — a new specialism is an operator decision, not a code change.
 
