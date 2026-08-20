@@ -223,7 +223,9 @@ The memory system creates instruction pages for the built-in roles when the vaul
 
 The three built-in pages are operating context, not agent registrations: if the corresponding OpenClaw agent is absent, its instruction page still exists but has nothing to drive.
 
-Agents beyond those three are created from the dashboard — see [Creating an agent](#creating-an-agent). A created agent, such as an operator-defined `Patrick Bateman`, arrives with its own workspace, `AGENTS.md`, instruction memory, role label, and animated appearance, and then behaves like any other agent in chat, delegation, and usage attribution.
+Agents beyond those three are created from the dashboard — see [Creating an agent](#creating-an-agent). A created agent arrives with its own workspace, `AGENTS.md`, instruction memory, role label, and animated appearance, and then behaves like any other agent in chat, delegation, and usage attribution.
+
+`Patrick Bateman`, a finance specialist agent, is the worked example of that path: created from the Agent Room rather than shipped as a built-in role, with his mandate written in his own instruction page instead of anywhere in this codebase. That separation is the point of the creation flow — a new specialism is an operator decision, not a code change.
 
 Black Noir runs with a narrowed memory scope, because an extraction specialist should not be able to browse or rewrite the operator's wider Second Brain:
 
