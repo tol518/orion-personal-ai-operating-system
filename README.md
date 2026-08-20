@@ -1,3 +1,5 @@
+<img width="1254" height="1254" alt="ChatGPT Image Aug 20, 2026 at 12_02_11 PM" src="https://github.com/user-attachments/assets/99730e27-5322-4b85-bb48-316ee2c2058f" />
+
 # ORION
 
 ORION is a personal AI operating system built around an OpenClaw deployment. It brings agent sessions, memory-backed chat, workflow learning, authorized data extraction, job-application assistance, node control, screen mirroring, and usage reporting into one React control center.
