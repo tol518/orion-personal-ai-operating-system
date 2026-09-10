@@ -10,6 +10,7 @@
 // same-origin checks, which a native client cannot satisfy.
 import express from "express";
 import { DesktopAccess, desktopBearerToken } from "./desktop-access.js";
+import { REMOTE_SERVICES } from "./remote-access.js";
 
 // Only these gateway events reach Orion.app. Hunting, extraction, workflow-learning, and memory
 // mutation events belong to features that are out of scope for the native app in V1, so they are
@@ -67,6 +68,7 @@ const CAPABILITY_MAP = [
  * @param {Function} deps.chatHistory                             bounded history reader
  * @param {Function} deps.modelOptionsFromConfig                  existing model projection
  * @param {Function} deps.subscribe                               registers an SSE responder
+ * @param {import("./remote-access.js").RemoteAccessDirectory} [deps.remoteAccess]
  */
 export function createDesktopApi({
   gateway,
@@ -75,6 +77,7 @@ export function createDesktopApi({
   chatHistory,
   modelOptionsFromConfig,
   subscribe,
+  remoteAccess,
 }) {
   const router = express.Router();
 
@@ -255,6 +258,67 @@ export function createDesktopApi({
     } catch (err) {
       fail(res, err);
     }
+  });
+
+  // ---- Remote access ------------------------------------------------------
+  // Orion reports which native remote-desktop service is reachable on each node and records that
+  // a session was opened. It never proxies a framebuffer or injects input: macOS Screen Sharing
+  // and Windows RDP already do that properly, and a hand-written transport would be worse.
+  router.get("/remote-access", async (_req, res) => {
+    if (!remoteAccess) return fail(res, "Remote access discovery is not configured", 503);
+    try {
+      const payload = await gateway.request("node.list", {});
+      const nodes = (payload?.nodes ?? []).map(toNodeSummary);
+      ok(res, { nodes: await remoteAccess.describe(nodes) });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // Records the intent to open a session. The response carries the host and scheme, never a
+  // ready-made URL: the client builds its own from an allowlisted scheme so a compromised or
+  // buggy server cannot hand the desktop an arbitrary URL to open.
+  router.post("/remote-access/:nodeId/session", async (req, res) => {
+    if (!remoteAccess) return fail(res, "Remote access discovery is not configured", 503);
+    const kind = typeof req.body?.kind === "string" ? req.body.kind.trim() : "";
+    const service = REMOTE_SERVICES.find((entry) => entry.kind === kind);
+    if (!service) return fail(res, "unknown remote access service", 400);
+    if (!service.scheme) return fail(res, `${service.label} is not something to launch`, 400);
+    try {
+      const payload = await gateway.request("node.list", {});
+      const nodes = (payload?.nodes ?? []).map(toNodeSummary);
+      const node = nodes.find((entry) => entry.id === req.params.nodeId);
+      if (!node) return fail(res, "node not found", 404);
+
+      // describe() resolves peers itself, so address resolution is identical to the read model.
+      // Calling describeNode() directly here would skip tailnet discovery and see only overrides.
+      const [described] = await remoteAccess.describe([node]);
+      if (!described.host) return fail(res, described.hint ?? "no address for this node", 409);
+      const available = described.services.find((entry) => entry.kind === kind);
+      if (!available?.reachable) {
+        return fail(res, `${service.label} is not reachable on ${node.name}`, 409);
+      }
+
+      const event = remoteAccess.recordSession({
+        nodeId: node.id,
+        kind,
+        clientId: req.desktopClient.clientId,
+      });
+      ok(res, {
+        host: described.host,
+        port: service.port,
+        scheme: service.scheme,
+        service: service.kind,
+        openedAt: event.at,
+      });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  router.get("/remote-access/audit", (_req, res) => {
+    if (!remoteAccess) return fail(res, "Remote access discovery is not configured", 503);
+    ok(res, { events: remoteAccess.audit() });
   });
 
   return router;

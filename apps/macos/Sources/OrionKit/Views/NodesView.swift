@@ -22,11 +22,25 @@ struct NodesView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(store.nodes) { node in
-                            NodeCard(node: node)
+                            NodeCard(
+                                node: node,
+                                access: store.remoteAccess(for: node.id),
+                                isLaunching: store.launchingNodeId == node.id,
+                                onConnect: { kind in
+                                    Task { await store.openRemoteSession(nodeId: node.id, kind: kind) }
+                                }
+                            )
                         }
-                        Text("Read-only in this release. Remote execution, screen control, and file access require a separate authorization model.")
+                        if let unavailable = store.remoteAccessUnavailable {
+                            Label(unavailable, systemImage: "info.circle")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 4)
+                        }
+                        Text("Connecting opens macOS Screen Sharing or the Windows App over your private network. Orion does not carry the screen itself — those handle video, audio, clipboard, and file transfer natively. Agent-driven execution and file access still require a separate authorization model.")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 4)
                     }
                     .padding(20)
@@ -46,6 +60,9 @@ struct NodesView: View {
 
 struct NodeCard: View {
     let node: DesktopNode
+    let access: RemoteAccessNode?
+    let isLaunching: Bool
+    let onConnect: (String) -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -79,11 +96,78 @@ struct NodeCard: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
+                remoteAccessSection
             }
             Spacer(minLength: 0)
         }
         .padding(14)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    @ViewBuilder
+    private var remoteAccessSection: some View {
+        if let access {
+            Divider().padding(.vertical, 2)
+            if let host = access.host {
+                Text(host)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .textSelection(.enabled)
+            }
+            if access.launchableServices.isEmpty {
+                unavailableHint(for: access)
+            } else {
+                HStack(spacing: 8) {
+                    ForEach(access.launchableServices) { service in
+                        Button {
+                            onConnect(service.kind)
+                        } label: {
+                            if isLaunching {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Opening…")
+                                }
+                            } else {
+                                Label("Connect", systemImage: "display")
+                            }
+                        }
+                        .disabled(isLaunching)
+                        .help("Opens \(service.label) on \(access.host ?? node.name)")
+                    }
+                    // Named so it is obvious which app is about to take over the screen.
+                    if let first = access.launchableServices.first {
+                        Text("via \(first.label)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Says what to switch on, rather than only that nothing is available.
+    @ViewBuilder
+    private func unavailableHint(for access: RemoteAccessNode) -> some View {
+        if let hint = access.hint {
+            Text(hint)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if node.platform == .macos {
+            Text("Screen Sharing is off on this Mac. Turn it on in System Settings → General → Sharing.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if node.platform == .windows {
+            Text("Remote Desktop is not reachable. Enable it in Settings → System → Remote Desktop (needs Windows Pro).")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Text("No remote-desktop service is reachable on this node.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
     }
 
     private var symbol: String {

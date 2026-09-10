@@ -170,6 +170,22 @@ public actor OrionClient {
         return response.nodes
     }
 
+    /// Which native remote-desktop services the Mini can see on each node.
+    public func remoteAccess() async throws -> [RemoteAccessNode] {
+        let response: RemoteAccessResponse = try await send("remote-access")
+        return response.nodes
+    }
+
+    /// Registers the intent to open a session and returns the parts to build a URL from.
+    ///
+    /// The Mini audits this call. It returns host, port, and scheme rather than a URL, so the
+    /// client decides what it is willing to launch — see `RemoteLauncher`.
+    public func openRemoteSession(nodeId: String, kind: String) async throws -> RemoteSessionGrant {
+        struct Body: Encodable { let kind: String }
+        let encoded = nodeId.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? nodeId
+        return try await send("remote-access/\(encoded)/session", method: "POST", body: Body(kind: kind))
+    }
+
     public func history(sessionKey: String) async throws -> [ChatMessage] {
         let encoded = sessionKey.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? sessionKey
         let response: HistoryResponse = try await send("sessions/\(encoded)/history")

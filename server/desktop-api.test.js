@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import express from "express";
 import { DesktopAccess } from "./desktop-access.js";
+import { RemoteAccessDirectory } from "./remote-access.js";
 import {
   createDesktopApi,
   desktopEventFrame,
@@ -42,6 +43,12 @@ async function boot({ gateway = fakeGateway(), access, deps = {} } = {}) {
         agentId,
         current: "anthropic/claude-opus-4",
         models: [{ id: "anthropic/claude-opus-4", label: "Opus" }],
+      }),
+      remoteAccess: new RemoteAccessDirectory({
+        listPeers: async () => [
+          { shortName: "mac-mini", dnsName: "mac-mini.tail0000.ts.net" },
+        ],
+        probe: async (_host, port) => port === 5900,
       }),
       subscribe: (res) => {
         subscribers.add(res);
@@ -444,6 +451,108 @@ test("toNodeSummary tolerates a malformed node", () => {
     status: "unknown",
     capabilities: [],
   });
+});
+
+test("remote access reports reachable services per node", async (t) => {
+  const gateway = fakeGateway({
+    "node.list": () => ({
+      nodes: [
+        { nodeId: "node-mini", displayName: "mac-mini", platform: "darwin", connected: true, commands: [] },
+      ],
+    }),
+  });
+  const app = await boot({ gateway });
+  t.after(() => app.close());
+  const { body } = await pairToken(app.base);
+  const result = await (
+    await fetch(`${app.base}/remote-access`, { headers: authed(body.token) })
+  ).json();
+
+  const node = result.nodes[0];
+  assert.equal(node.nodeId, "node-mini");
+  assert.equal(node.host, "mac-mini.tail0000.ts.net");
+  const screenSharing = node.services.find((service) => service.kind === "screen-sharing");
+  assert.equal(screenSharing.reachable, true);
+  assert.equal(screenSharing.scheme, "vnc");
+});
+
+test("opening a session returns launch parts, never a ready-made URL", async (t) => {
+  // The client builds its own URL from an allowlisted scheme, so a compromised server cannot
+  // hand the desktop an arbitrary URL to open.
+  const gateway = fakeGateway({
+    "node.list": () => ({
+      nodes: [
+        { nodeId: "node-mini", displayName: "mac-mini", platform: "darwin", connected: true, commands: [] },
+      ],
+    }),
+  });
+  const app = await boot({ gateway });
+  t.after(() => app.close());
+  const { body } = await pairToken(app.base);
+
+  const response = await fetch(`${app.base}/remote-access/node-mini/session`, {
+    method: "POST",
+    headers: { ...authed(body.token), "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "screen-sharing" }),
+  });
+  assert.equal(response.status, 200);
+  const opened = await response.json();
+  assert.equal(opened.host, "mac-mini.tail0000.ts.net");
+  assert.equal(opened.scheme, "vnc");
+  assert.equal(opened.port, 5900);
+  assert.equal("url" in opened, false, "the server must not supply a URL to open");
+
+  const audit = await (
+    await fetch(`${app.base}/remote-access/audit`, { headers: authed(body.token) })
+  ).json();
+  assert.equal(audit.events.length, 1);
+  assert.equal(audit.events[0].action, "remote-session.open");
+  assert.equal(audit.events[0].clientId, "macbook-test");
+});
+
+test("opening an unreachable or unknown service is refused", async (t) => {
+  const gateway = fakeGateway({
+    "node.list": () => ({
+      nodes: [
+        { nodeId: "node-mini", displayName: "mac-mini", platform: "darwin", connected: true, commands: [] },
+      ],
+    }),
+  });
+  const app = await boot({ gateway });
+  t.after(() => app.close());
+  const { body } = await pairToken(app.base);
+
+  const post = (payload, nodeId = "node-mini") =>
+    fetch(`${app.base}/remote-access/${nodeId}/session`, {
+      method: "POST",
+      headers: { ...authed(body.token), "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+  assert.equal((await post({ kind: "not-a-service" })).status, 400);
+  // Port 3389 is not reachable in this fixture, and RDP is not a mac service either.
+  assert.equal((await post({ kind: "remote-desktop" })).status, 409);
+  // A management channel is not something to launch a viewer against.
+  assert.equal((await post({ kind: "apple-remote-desktop" })).status, 400);
+  assert.equal((await post({ kind: "screen-sharing" }, "no-such-node")).status, 404);
+});
+
+test("remote access requires authentication like every other route", async (t) => {
+  const app = await boot();
+  t.after(() => app.close());
+  for (const route of ["/remote-access", "/remote-access/audit"]) {
+    assert.equal((await fetch(`${app.base}${route}`)).status, 401);
+  }
+  const anonymous = await fetch(`${app.base}/remote-access/node-mini/session`, { method: "POST" });
+  assert.equal(anonymous.status, 401);
+});
+
+test("remote access answers 503 when discovery is not configured", async (t) => {
+  const app = await boot({ deps: { remoteAccess: undefined } });
+  t.after(() => app.close());
+  const { body } = await pairToken(app.base);
+  const response = await fetch(`${app.base}/remote-access`, { headers: authed(body.token) });
+  assert.equal(response.status, 503);
 });
 
 test("no destructive session or node route is exposed in V1", async (t) => {

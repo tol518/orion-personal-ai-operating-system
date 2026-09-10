@@ -75,8 +75,34 @@ The app shows the client id it will pair as; that is the value for
 | Home | Gateway/BFF status, recent sessions, node summary |
 | Agents | Existing agents and their available models; start a session |
 | Chat | Session list, transcript, streamed replies, failure state |
-| Nodes | Read-only status and capabilities per paired node |
+| Nodes | Status and capabilities per paired node, plus one-click remote desktop |
 | Settings | Address, pairing, notifications, and what this app can reach |
+
+## Remote desktop
+
+The Nodes screen shows which native remote-desktop service is reachable on each machine and
+offers a **Connect** button. Connecting launches macOS Screen Sharing or the Windows App over
+your private network — Orion never carries the screen itself, so you get hardware video decode,
+audio, clipboard sync, file drag-and-drop, and multiple displays, none of which a hand-written
+viewer would give you. Full-screen Screen Sharing and the Mini becomes its own Space you can
+swipe to, like another desktop.
+
+**On the Mac mini**, turn on System Settings → General → Sharing → **Screen Sharing**.
+
+**On Windows**, enable Settings → System → **Remote Desktop** (needs Windows Pro or Enterprise),
+and install the **Windows App** from the Mac App Store on this Mac.
+
+If a node shows no address, map it on the Mini:
+
+```sh
+ORION_REMOTE_ACCESS_HOSTS=node-abc=pc.your-tailnet.ts.net
+```
+
+With the Tailscale CLI installed on the Mini, nodes are matched to tailnet peers by name
+automatically — but only when the match is unambiguous, so an override is always available.
+
+Every connection is recorded on the Mini: which client opened which service on which node, and
+when. No credential and no screen content is in that record.
 
 ## Not in this release
 
