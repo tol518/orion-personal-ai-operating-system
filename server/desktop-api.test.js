@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import express from "express";
 import { DesktopAccess } from "./desktop-access.js";
-import { createDesktopApi, desktopEventFrame, DESKTOP_EVENTS, toNodeSummary } from "./desktop-api.js";
+import {
+  createDesktopApi,
+  desktopEventFrame,
+  DESKTOP_EVENTS,
+  toNodeSummary,
+  toSessionSummary,
+} from "./desktop-api.js";
 
 const SECRET = "pairing-secret-for-tests";
 
@@ -208,6 +214,62 @@ test("sessions list bounds the limit and requests derived titles", async (t) => 
 
   await fetch(`${app.base}/sessions?limit=nonsense`, { headers: authed(body.token) });
   assert.equal(gateway.calls.at(-1).params.limit, 20);
+});
+
+test("sessions are projected to a stable native shape", async (t) => {
+  const gateway = fakeGateway({
+    "sessions.list": () => ({
+      sessions: [
+        {
+          key: "agent:codex:42",
+          derivedTitle: "  Deploy review  ",
+          label: "ignored when a derived title exists",
+          model: "anthropic/claude-opus-4",
+          updatedAt: 1_757_520_000_000,
+          hasActiveRun: true,
+          totalTokens: 1234,
+          contextTokens: 900,
+          lastMessagePreview: "on it",
+          internalCursor: "must-not-appear",
+        },
+      ],
+    }),
+  });
+  const app = await boot({ gateway });
+  t.after(() => app.close());
+  const { body } = await pairToken(app.base);
+  const result = await (await fetch(`${app.base}/sessions`, { headers: authed(body.token) })).json();
+
+  assert.deepEqual(result.sessions, [
+    {
+      key: "agent:codex:42",
+      agentId: "codex",
+      title: "Deploy review",
+      model: "anthropic/claude-opus-4",
+      lastMessagePreview: "on it",
+      hasActiveRun: true,
+      totalTokens: 1234,
+      contextTokens: 900,
+      updatedAt: "2025-09-10T16:00:00.000Z",
+    },
+  ]);
+  assert.equal(JSON.stringify(result).includes("must-not-appear"), false);
+});
+
+test("toSessionSummary falls back through the title fields and tolerates gaps", () => {
+  assert.deepEqual(toSessionSummary({ key: "agent:main:1", label: "From MacBook" }), {
+    key: "agent:main:1",
+    agentId: "main",
+    title: "From MacBook",
+    model: null,
+    lastMessagePreview: null,
+    hasActiveRun: false,
+    totalTokens: null,
+    contextTokens: null,
+  });
+  assert.equal(toSessionSummary({}).title, "Untitled session");
+  assert.equal(toSessionSummary({}).agentId, "main", "an unparseable key falls back to main");
+  assert.equal(toSessionSummary({ key: "x", displayName: "Shown" }).title, "Shown");
 });
 
 test("session creation requires an agentId and never creates agents", async (t) => {

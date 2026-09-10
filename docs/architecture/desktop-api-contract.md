@@ -48,7 +48,7 @@ client key (5 attempts / 5 minutes) by the same logic the existing access gates 
 | --- | --- | --- |
 | `GET /api/v1/desktop/health` | `gateway.status()` | Reports reachability and gateway connection. Redacts URLs, tokens, scopes detail, and internal error strings beyond a short reason. |
 | `GET /api/v1/desktop/agents` | gateway `agents.list`, then `config.get` for per-agent models | Same projection the web client sees, minus sprite/appearance payloads the native UI does not use. |
-| `GET /api/v1/desktop/sessions` | gateway `sessions.list` | `includeDerivedTitles` and `includeLastMessage`, matching `/api/sessions`. |
+| `GET /api/v1/desktop/sessions` | gateway `sessions.list` | `includeDerivedTitles` and `includeLastMessage`, matching `/api/sessions`. Projected to a stable native shape: the agent id is derived from the session key the same way the web client derives it, and the title falls back through `derivedTitle` → `label` → `displayName`. |
 | `POST /api/v1/desktop/sessions` | gateway `sessions.create` | Requires an existing `agentId`. Does not create agents. |
 | `GET /api/v1/desktop/sessions/:key/history` | gateway `chat.history` | Bounded by the same `CHAT_HISTORY_MAX_CHARS` envelope as `/api/history`. |
 | `POST /api/v1/desktop/chat` | the BFF's existing `submitChatTurn` path | Delegates to the *same* function `/api/chat` uses, so memory retrieval, execution policy, attachment grants, and safety behavior are identical. The desktop app does not re-implement any of it. |

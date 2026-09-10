@@ -177,7 +177,7 @@ export function createDesktopApi({
         includeDerivedTitles: true,
         includeLastMessage: true,
       });
-      ok(res, { sessions: result?.sessions ?? [] });
+      ok(res, { sessions: (result?.sessions ?? []).map(toSessionSummary) });
     } catch (err) {
       fail(res, err);
     }
@@ -274,6 +274,37 @@ export function toNodeSummary(node) {
     ).map(({ capability }) => capability),
     ...(node?.lastSeen ? { lastSeenAt: new Date(node.lastSeen).toISOString() } : {}),
   };
+}
+
+/**
+ * Projects a gateway session into a stable native shape. The agent id is derived from the session
+ * key the same way the web client derives it, so both surfaces agree on which agent owns a
+ * session without the native app parsing gateway key formats itself.
+ */
+export function toSessionSummary(session) {
+  const key = String(session?.key ?? "");
+  const title =
+    firstNonEmpty(session?.derivedTitle, session?.label, session?.displayName) ?? "Untitled session";
+  return {
+    key,
+    agentId: /^agent:([^:]+):/.exec(key)?.[1] ?? "main",
+    title,
+    model: firstNonEmpty(session?.model) ?? null,
+    lastMessagePreview: firstNonEmpty(session?.lastMessagePreview) ?? null,
+    hasActiveRun: session?.hasActiveRun === true,
+    totalTokens: Number.isFinite(session?.totalTokens) ? session.totalTokens : null,
+    contextTokens: Number.isFinite(session?.contextTokens) ? session.contextTokens : null,
+    ...(Number.isFinite(session?.updatedAt)
+      ? { updatedAt: new Date(session.updatedAt).toISOString() }
+      : {}),
+  };
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
 }
 
 function normalizePlatform(value) {
