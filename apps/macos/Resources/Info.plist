@@ -24,14 +24,28 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Orion personal AI operating system</string>
-	<!-- The Mini is reached over Tailscale by MagicDNS name. That transport is already
-	     encrypted, and a MagicDNS name has no public certificate, so plain HTTP to a private
-	     tailnet host is permitted here. Arbitrary insecure loads are not: this is scoped to
-	     private hosts, and an https:// address the user enters is still honoured. -->
+	<!-- The Mini is reached over Tailscale by MagicDNS name, e.g. host.tailnet.ts.net.
+	     NSAllowsLocalNetworking is not enough for that: it covers .local, loopback, and
+	     link-local only, so ATS treats a .ts.net name as a public host and demands HTTPS.
+	     The exception below is scoped to ts.net, and nothing else. A tailnet address is not
+	     routable from the public internet and the traffic to it is already WireGuard-encrypted
+	     end to end, so HTTP over it is not a cleartext-on-the-wire exposure.
+	     An https:// address is still honoured and preferred: run `tailscale cert` on the Mini
+	     to get a real certificate for its MagicDNS name and this exception stops mattering. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>ts.net</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
 </dict>
 </plist>
