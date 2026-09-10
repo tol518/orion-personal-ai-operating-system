@@ -42,6 +42,22 @@ rather than failing obscurely.
 The BFF binds to `127.0.0.1` by default. To reach it from another machine, bind it to the Mini's
 **Tailscale address** — not `0.0.0.0` — and never expose the port publicly.
 
+### HTTP over Tailscale, and how to stop needing it
+
+App Transport Security blocks plain HTTP to a `.ts.net` name, because ATS sees an ordinary public
+domain. `Info.plist` carries an exception scoped to `ts.net` and nothing else: a tailnet address
+is not routable from the public internet and its traffic is already WireGuard-encrypted, so this
+is not cleartext on the wire.
+
+To remove the need for the exception entirely, give the Mini a real certificate for its MagicDNS
+name and serve the BFF over TLS:
+
+```sh
+tailscale cert "$(tailscale status --json | jq -r .Self.DNSName | sed 's/\.$//')"
+```
+
+Then enter the address in the app with an explicit `https://` — that is honoured and preferred.
+
 ## Pair this Mac
 
 1. Launch Orion.app.
