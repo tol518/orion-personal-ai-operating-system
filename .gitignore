@@ -33,3 +33,31 @@ server/data/
 
 # Public-release denylist supplied outside the repository
 .public-release-denylist
+
+# ---- Added for the private source base (see docs/architecture/data-classification.md) ----
+# Runtime state directories named in the architecture plan's baseline. server/data/ is already
+# ignored above; these cover the same classes of content if they appear at another root.
+state/
+sessions/
+artifacts/
+attachments/
+backups/
+server/state/
+server/sessions/
+server/artifacts/
+server/attachments/
+server/backups/
+
+# Private denylist and encrypted backups must never enter Git
+*.age
+*.gpg
+*.enc
+
+# Native macOS client build output
+apps/macos/.build/
+apps/macos/build/
+apps/macos/*.xcodeproj/xcuserdata/
+apps/macos/*.xcworkspace/xcuserdata/
+DerivedData/
+*.dSYM/
+*.app/
