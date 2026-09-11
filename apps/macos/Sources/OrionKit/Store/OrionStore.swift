@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -38,6 +39,10 @@ public final class OrionStore {
     public private(set) var agents: [DesktopAgent] = []
     public private(set) var sessions: [DesktopSession] = []
     public private(set) var nodes: [DesktopNode] = []
+    /// Remote-desktop availability per node. Empty when the Mini has no discovery configured.
+    public private(set) var remoteAccess: [RemoteAccessNode] = []
+    public private(set) var remoteAccessUnavailable: String?
+    public private(set) var launchingNodeId: String?
 
     // MARK: Chat
     public internal(set) var selectedSessionKey: String?
@@ -56,6 +61,7 @@ public final class OrionStore {
     private let client: OrionClient
     private let settingsStore: SettingsStore
     private let notifier: Notifying
+    private let opener: @MainActor (URL) -> Bool
     private var streamTask: Task<Void, Never>?
     private var reconnectAttempt = 0
     /// Guards against a late history load overwriting a newer session's transcript.
@@ -64,11 +70,13 @@ public final class OrionStore {
     public init(
         client: OrionClient = OrionClient(),
         settingsStore: SettingsStore = SettingsStore(),
-        notifier: Notifying = SystemNotifier()
+        notifier: Notifying = SystemNotifier(),
+        opener: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
     ) {
         self.client = client
         self.settingsStore = settingsStore
         self.notifier = notifier
+        self.opener = opener
         self.settings = settingsStore.load()
     }
 
@@ -173,6 +181,7 @@ public final class OrionStore {
         agents = []
         sessions = []
         nodes = []
+        remoteAccess = []
         messages = []
         selectedSessionKey = nil
         streamingReply = nil
@@ -197,6 +206,7 @@ public final class OrionStore {
         if let loadedAgents { agents = loadedAgents }
         if let loadedSessions { sessions = loadedSessions }
         if let loadedNodes { nodes = loadedNodes }
+        await refreshRemoteAccess()
         // The gateway being down is the usual reason all three fail at once; the health check and
         // the event stream already report that, so this only surfaces a partial failure.
         if loadedAgents == nil && loadedSessions == nil && loadedNodes == nil && gatewayConnected {
@@ -207,6 +217,57 @@ public final class OrionStore {
     public func refreshNodes() async {
         guard let loaded = try? await client.nodes() else { return }
         nodes = loaded
+        await refreshRemoteAccess()
+    }
+
+    /// Reads remote-desktop availability. A Mini without discovery configured answers 503, which
+    /// is a configuration state to explain rather than an error to alarm the user with.
+    public func refreshRemoteAccess() async {
+        do {
+            remoteAccess = try await client.remoteAccess()
+            remoteAccessUnavailable = nil
+        } catch let error as OrionClientError {
+            remoteAccess = []
+            switch error {
+            case .desktopAccessDisabled, .desktopAPIMissing:
+                remoteAccessUnavailable = "This Mini does not offer remote-desktop discovery yet."
+            case .server(503, let message):
+                remoteAccessUnavailable = message
+            default:
+                remoteAccessUnavailable = error.localizedDescription
+            }
+        } catch {
+            remoteAccess = []
+            remoteAccessUnavailable = error.localizedDescription
+        }
+    }
+
+    public func remoteAccess(for nodeId: String) -> RemoteAccessNode? {
+        remoteAccess.first { $0.nodeId == nodeId }
+    }
+
+    /// Opens a remote session by handing a validated URL to the system.
+    ///
+    /// Orion does not display the remote screen itself: it launches Screen Sharing or the Windows
+    /// App, which do it natively. The URL is built locally from validated parts, never taken
+    /// whole from the server.
+    public func openRemoteSession(nodeId: String, kind: String) async {
+        launchingNodeId = nodeId
+        defer { launchingNodeId = nil }
+        do {
+            let grant = try await client.openRemoteSession(nodeId: nodeId, kind: kind)
+            let url = try RemoteLauncher.url(for: grant)
+            guard opener(url) else {
+                let app = RemoteLauncher.targetApplication(forScheme: grant.scheme) ?? "the viewer"
+                lastError = "macOS could not open \(app) for \(grant.host)."
+                return
+            }
+        } catch let error as OrionClientError {
+            lastError = error.localizedDescription
+            if error.requiresPairing { handleConnectionFailure(error) }
+        } catch {
+            lastError = error.localizedDescription
+        }
     }
 
     // MARK: - Sessions and chat

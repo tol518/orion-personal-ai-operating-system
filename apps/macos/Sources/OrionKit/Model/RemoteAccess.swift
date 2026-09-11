@@ -1,0 +1,129 @@
+import Foundation
+
+/// A native remote-desktop service the Mini reports as present on a node.
+///
+/// Orion never carries the session itself. macOS Screen Sharing and Windows RDP already do that
+/// with hardware video decode, audio, clipboard sync, file drag-and-drop, and multiple displays;
+/// this type exists only so the app can say what is available and hand off to the real client.
+public struct RemoteService: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { kind }
+    public let kind: String
+    public let label: String
+    public let port: Int
+    /// Nil for services that are informational only, such as the ARD management channel.
+    public let scheme: String?
+    public let launchable: Bool
+    public let reachable: Bool
+}
+
+public struct RemoteAccessNode: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { nodeId }
+    public let nodeId: String
+    public let host: String?
+    public let hostSource: String
+    public let services: [RemoteService]
+    /// Present when no address could be resolved; says what to configure.
+    public let hint: String?
+
+    public var launchableServices: [RemoteService] {
+        services.filter { $0.launchable && $0.reachable }
+    }
+
+    public var hasAnyReachableService: Bool {
+        services.contains { $0.reachable }
+    }
+}
+
+/// What the Mini returns when a session is opened: the parts to build a URL from, not a URL.
+public struct RemoteSessionGrant: Decodable, Sendable {
+    public let host: String
+    public let port: Int
+    public let scheme: String
+    public let service: String
+
+    public init(host: String, port: Int, scheme: String, service: String) {
+        self.host = host
+        self.port = port
+        self.scheme = scheme
+        self.service = service
+    }
+}
+
+struct RemoteAccessResponse: Decodable { let nodes: [RemoteAccessNode] }
+
+/// Turns a grant into a URL for the system to open.
+///
+/// The scheme is checked against a fixed allowlist and the host against a strict pattern rather
+/// than trusting the response: this URL is handed to the window server to launch an application,
+/// so a compromised or buggy Mini must not be able to choose an arbitrary one. That is also why
+/// the server returns parts instead of a finished URL.
+public enum RemoteLauncher {
+    /// Schemes this app is willing to open, and the app each one reaches.
+    public static let allowedSchemes: [String: String] = [
+        "vnc": "Screen Sharing",
+        "rdp": "Windows App",
+    ]
+
+    /// Characters a hostname or IP literal may contain. Everything else is refused.
+    private static let allowedHostCharacters = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-"
+    )
+
+    /// Validates a hostname by inspecting it directly rather than with an anchored regex.
+    ///
+    /// An earlier version used `^...$` and let "host\nevil" through: ICU's `$` does not anchor the
+    /// way a whole-string check needs when the value contains a line separator. Checking the
+    /// character set and each label explicitly has no such edge case.
+    static func isValidHost(_ host: String) -> Bool {
+        guard (1...253).contains(host.count) else { return false }
+        guard host.unicodeScalars.allSatisfy({ allowedHostCharacters.contains($0) }) else { return false }
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard !labels.isEmpty else { return false }
+        return labels.allSatisfy { label in
+            // Rejects empty labels ("a..b", a leading or trailing dot) and dash-edged labels.
+            (1...63).contains(label.count) && label.first != "-" && label.last != "-"
+        }
+    }
+
+    public enum LaunchError: LocalizedError, Equatable {
+        case unsupportedScheme(String)
+        case invalidHost(String)
+        case invalidPort(Int)
+        case malformedURL
+
+        public var errorDescription: String? {
+            switch self {
+            case .unsupportedScheme(let scheme):
+                return "The Mini asked to open a “\(scheme)” session, which this app does not support."
+            case .invalidHost(let host):
+                return "The Mini returned an address this app will not open: \(host)"
+            case .invalidPort(let port):
+                return "The Mini returned an invalid port: \(port)"
+            case .malformedURL:
+                return "Could not build a connection address for that node."
+            }
+        }
+    }
+
+    /// Validates a grant and returns the URL to hand to the system.
+    public static func url(for grant: RemoteSessionGrant) throws -> URL {
+        let scheme = grant.scheme.lowercased()
+        guard allowedSchemes[scheme] != nil else { throw LaunchError.unsupportedScheme(grant.scheme) }
+        guard (1...65_535).contains(grant.port) else { throw LaunchError.invalidPort(grant.port) }
+
+        let host = grant.host
+        guard isValidHost(host) else { throw LaunchError.invalidHost(host) }
+
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = host
+        components.port = grant.port
+        guard let url = components.url else { throw LaunchError.malformedURL }
+        return url
+    }
+
+    /// The application a given scheme hands off to, for telling the user what will open.
+    public static func targetApplication(forScheme scheme: String) -> String? {
+        allowedSchemes[scheme.lowercased()]
+    }
+}

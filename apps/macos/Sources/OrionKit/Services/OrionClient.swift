@@ -6,6 +6,7 @@ public enum OrionClientError: LocalizedError, Equatable {
     case notPaired
     case unauthorized
     case desktopAccessDisabled
+    case desktopAPIMissing
     case throttled(retryAfter: Int?)
     case server(status: Int, message: String)
     case transport(String)
@@ -21,6 +22,8 @@ public enum OrionClientError: LocalizedError, Equatable {
             return "The pairing for this Mac is no longer valid. Pair again."
         case .desktopAccessDisabled:
             return "The Mini has not enabled desktop access. Set ORION_DESKTOP_PAIRING_SECRET on the Mini and restart the BFF."
+        case .desktopAPIMissing:
+            return "The Mini answered, but it has no desktop API. It is running a version of Orion from before native client support — update the server on the Mini and restart it."
         case .throttled(let retryAfter):
             guard let retryAfter else { return "Too many attempts. Try again shortly." }
             return "Too many attempts. Try again in \(retryAfter)s."
@@ -167,6 +170,22 @@ public actor OrionClient {
         return response.nodes
     }
 
+    /// Which native remote-desktop services the Mini can see on each node.
+    public func remoteAccess() async throws -> [RemoteAccessNode] {
+        let response: RemoteAccessResponse = try await send("remote-access")
+        return response.nodes
+    }
+
+    /// Registers the intent to open a session and returns the parts to build a URL from.
+    ///
+    /// The Mini audits this call. It returns host, port, and scheme rather than a URL, so the
+    /// client decides what it is willing to launch — see `RemoteLauncher`.
+    public func openRemoteSession(nodeId: String, kind: String) async throws -> RemoteSessionGrant {
+        struct Body: Encodable { let kind: String }
+        let encoded = nodeId.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? nodeId
+        return try await send("remote-access/\(encoded)/session", method: "POST", body: Body(kind: kind))
+    }
+
     public func history(sessionKey: String) async throws -> [ChatMessage] {
         let encoded = sessionKey.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? sessionKey
         let response: HistoryResponse = try await send("sessions/\(encoded)/history")
@@ -306,6 +325,8 @@ public actor OrionClient {
         case 429:
             let retryAfter = headers.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)
             return .throttled(retryAfter: retryAfter)
+        case 404:
+            return .desktopAPIMissing
         case 503:
             return .desktopAccessDisabled
         default:

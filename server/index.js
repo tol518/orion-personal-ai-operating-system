@@ -11,6 +11,7 @@ import dotenv from "dotenv";
 import { GatewayClient } from "./gateway.js";
 import { DesktopAccess } from "./desktop-access.js";
 import { createDesktopApi, desktopEventFrame } from "./desktop-api.js";
+import { RemoteAccessDirectory } from "./remote-access.js";
 import {
   addUsageTotals,
   buildUsageAttribution,
@@ -287,6 +288,11 @@ const desktopAccess = new DesktopAccess({
   pairingSecret: process.env.ORION_DESKTOP_PAIRING_SECRET,
   allowedClients: process.env.ORION_DESKTOP_ALLOWED_CLIENTS,
 });
+// Reports which native remote-desktop service is reachable per node. Discovery and audit only —
+// no framebuffer and no input injection ever pass through the BFF.
+const remoteAccess = new RemoteAccessDirectory({
+  hostOverrides: process.env.ORION_REMOTE_ACCESS_HOSTS,
+});
 // Workflow learning: Screenpipe is the observation layer, this store is the executable spec and
 // run log, and the Obsidian memory below holds the readable recipe.
 const screenpipe = new ScreenpipeClient();
@@ -545,6 +551,8 @@ app.use(
     chatHistory: readChatHistory,
     modelOptionsFromConfig,
     subscribe: subscribeDesktopEvents,
+    remoteAccess,
+    decorateNodes: (payload) => windowsScreen.decorateNodeList(payload),
   }),
 );
 

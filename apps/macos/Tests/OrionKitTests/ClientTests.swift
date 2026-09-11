@@ -66,6 +66,18 @@ final class FailureMappingTests: XCTestCase {
         XCTAssertFalse(error.requiresPairing)
     }
 
+    func testNotFoundMeansTheMiniHasNoDesktopAPI() {
+        // Reachable and answering, but running a server from before native client support.
+        // Reporting a bare "not found" sends the user hunting for a typo in a correct address.
+        let error = OrionClient.mapFailure(status: 404, headers: response(status: 404), data: Data())
+        XCTAssertEqual(error, .desktopAPIMissing)
+        XCTAssertFalse(error.requiresPairing, "re-pairing cannot fix a missing endpoint")
+        XCTAssertEqual(
+            error.errorDescription?.contains("update the server on the Mini"),
+            true
+        )
+    }
+
     func testThrottledCarriesRetryAfter() {
         let error = OrionClient.mapFailure(
             status: 429,
