@@ -69,6 +69,7 @@ const CAPABILITY_MAP = [
  * @param {Function} deps.modelOptionsFromConfig                  existing model projection
  * @param {Function} deps.subscribe                               registers an SSE responder
  * @param {import("./remote-access.js").RemoteAccessDirectory} [deps.remoteAccess]
+ * @param {Function} [deps.decorateNodes]                         existing node projection
  */
 export function createDesktopApi({
   gateway,
@@ -78,12 +79,18 @@ export function createDesktopApi({
   modelOptionsFromConfig,
   subscribe,
   remoteAccess,
+  decorateNodes,
 }) {
   const router = express.Router();
 
   const ok = (res, payload) => res.json({ ok: true, ...payload });
   const fail = (res, err, code = 502) =>
     res.status(err?.statusCode ?? code).json({ ok: false, error: String(err?.message ?? err) });
+  const listNodes = async () => {
+    const payload = await gateway.request("node.list", {});
+    const decorated = decorateNodes ? await decorateNodes(payload) : payload;
+    return (decorated?.nodes ?? []).map(toNodeSummary);
+  };
 
   // ---- Pairing ------------------------------------------------------------
   // Unauthenticated by necessity: this is where a device obtains its credential. It is protected
@@ -253,8 +260,7 @@ export function createDesktopApi({
   // ---- Nodes --------------------------------------------------------------
   router.get("/nodes", async (_req, res) => {
     try {
-      const payload = await gateway.request("node.list", {});
-      ok(res, { nodes: (payload?.nodes ?? []).map(toNodeSummary) });
+      ok(res, { nodes: await listNodes() });
     } catch (err) {
       fail(res, err);
     }
@@ -267,8 +273,7 @@ export function createDesktopApi({
   router.get("/remote-access", async (_req, res) => {
     if (!remoteAccess) return fail(res, "Remote access discovery is not configured", 503);
     try {
-      const payload = await gateway.request("node.list", {});
-      const nodes = (payload?.nodes ?? []).map(toNodeSummary);
+      const nodes = await listNodes();
       ok(res, { nodes: await remoteAccess.describe(nodes) });
     } catch (err) {
       fail(res, err);
@@ -285,8 +290,7 @@ export function createDesktopApi({
     if (!service) return fail(res, "unknown remote access service", 400);
     if (!service.scheme) return fail(res, `${service.label} is not something to launch`, 400);
     try {
-      const payload = await gateway.request("node.list", {});
-      const nodes = (payload?.nodes ?? []).map(toNodeSummary);
+      const nodes = await listNodes();
       const node = nodes.find((entry) => entry.id === req.params.nodeId);
       if (!node) return fail(res, "node not found", 404);
 

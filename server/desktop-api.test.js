@@ -443,6 +443,48 @@ test("nodes are projected to the read-only summary shape", async (t) => {
   assert.equal(JSON.stringify(result).includes("must-not-appear"), false);
 });
 
+test("nodes apply the existing projection before platform classification", async (t) => {
+  const gateway = fakeGateway({
+    "node.list": () => ({
+      nodes: [
+        {
+          nodeId: "node-windows",
+          displayName: "Windows workstation",
+          platform: "linux",
+          connected: true,
+          commands: ["system.run"],
+        },
+      ],
+    }),
+  });
+  const app = await boot({
+    gateway,
+    deps: {
+      decorateNodes: async (payload) => ({
+        ...payload,
+        nodes: payload.nodes.map((node) => ({
+          ...node,
+          platform: "Windows",
+          commands: [...node.commands, "screen.capture"],
+        })),
+      }),
+    },
+  });
+  t.after(() => app.close());
+  const { body } = await pairToken(app.base);
+  const result = await (await fetch(`${app.base}/nodes`, { headers: authed(body.token) })).json();
+
+  assert.deepEqual(result.nodes, [
+    {
+      id: "node-windows",
+      name: "Windows workstation",
+      platform: "windows",
+      status: "online",
+      capabilities: ["exec", "screen"],
+    },
+  ]);
+});
+
 test("toNodeSummary tolerates a malformed node", () => {
   assert.deepEqual(toNodeSummary({}), {
     id: "",

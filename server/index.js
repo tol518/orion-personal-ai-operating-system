@@ -552,6 +552,7 @@ app.use(
     modelOptionsFromConfig,
     subscribe: subscribeDesktopEvents,
     remoteAccess,
+    decorateNodes: (payload) => windowsScreen.decorateNodeList(payload),
   }),
 );
 
