@@ -292,6 +292,7 @@ const desktopAccess = new DesktopAccess({
 // no framebuffer and no input injection ever pass through the BFF.
 const remoteAccess = new RemoteAccessDirectory({
   hostOverrides: process.env.ORION_REMOTE_ACCESS_HOSTS,
+  machines: process.env.ORION_REMOTE_ACCESS_MACHINES,
 });
 // Workflow learning: Screenpipe is the observation layer, this store is the executable spec and
 // run log, and the Obsidian memory below holds the readable recipe.

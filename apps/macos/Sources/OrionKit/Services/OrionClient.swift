@@ -56,6 +56,14 @@ public actor OrionClient {
     private let decoder: JSONDecoder
     private let encoder = JSONEncoder()
     private var baseURL: URL?
+    // The Keychain is read once per host and then held here.
+    //
+    // Reading it per request made macOS re-run its access check constantly: unless the user picks
+    // "Always Allow", every read raises an authorization prompt, and with the event stream
+    // reconnecting the prompts arrive faster than they can be dismissed. The actor serializes
+    // access, so this cache needs no lock of its own.
+    private var cachedToken: String?
+    private var cachedTokenHost: String?
 
     public init(credentials: CredentialStore = KeychainStore(), session: URLSession? = nil) {
         self.credentials = credentials
@@ -83,7 +91,25 @@ public actor OrionClient {
     // MARK: - Configuration
 
     public func configure(host: String) throws {
-        baseURL = try Self.resolveBaseURL(from: host)
+        let resolved = try Self.resolveBaseURL(from: host)
+        // Pointing at a different Mini must not reuse the previous one's token.
+        if resolved != baseURL { clearTokenCache() }
+        baseURL = resolved
+    }
+
+    private func clearTokenCache() {
+        cachedToken = nil
+        cachedTokenHost = nil
+    }
+
+    /// The stored token for the configured host, read from the Keychain at most once per host.
+    private func storedToken() throws -> String? {
+        let key = try credentialKey()
+        if cachedTokenHost == key, let cachedToken { return cachedToken }
+        guard let token = credentials.token(forHost: key) else { return nil }
+        cachedToken = token
+        cachedTokenHost = key
+        return token
     }
 
     /// Normalizes what a user is likely to type: a MagicDNS name, a name with a port, or a URL.
@@ -112,11 +138,12 @@ public actor OrionClient {
     }
 
     public func hasStoredToken() -> Bool {
-        guard let key = try? credentialKey() else { return false }
-        return credentials.token(forHost: key) != nil
+        guard let token = try? storedToken() else { return false }
+        return token != nil
     }
 
     public func forgetPairing() throws {
+        clearTokenCache()
         try credentials.removeToken(forHost: try credentialKey())
     }
 
@@ -139,7 +166,12 @@ public actor OrionClient {
             body: Body(pairingSecret: pairingSecret, clientId: clientId, clientName: clientName),
             authenticated: false
         )
-        try credentials.save(token: pairing.token, forHost: try credentialKey())
+        let key = try credentialKey()
+        try credentials.save(token: pairing.token, forHost: key)
+        // Seed the cache from the pairing response, so the first authenticated call after pairing
+        // does not have to read back what was just written.
+        cachedToken = pairing.token
+        cachedTokenHost = key
         return pairing
     }
 
@@ -170,10 +202,21 @@ public actor OrionClient {
         return response.nodes
     }
 
-    /// Which native remote-desktop services the Mini can see on each node.
-    public func remoteAccess() async throws -> [RemoteAccessNode] {
+    /// Which native remote-desktop services the Mini can see, for itself and for each node.
+    ///
+    /// The Mini's own entry gets the connected address as a fallback, so a Mini that cannot read
+    /// its own tailnet name is still reachable at the address that is plainly working.
+    public func remoteAccess() async throws -> (
+        mini: RemoteAccessNode?,
+        machines: [RemoteMachine],
+        nodes: [RemoteAccessNode]
+    ) {
         let response: RemoteAccessResponse = try await send("remote-access")
-        return response.nodes
+        return (
+            response.mini?.withFallbackHost(baseURL?.host),
+            response.machines ?? [],
+            response.nodes
+        )
     }
 
     /// Registers the intent to open a session and returns the parts to build a URL from.
@@ -254,9 +297,7 @@ public actor OrionClient {
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if authenticated {
-            guard let token = credentials.token(forHost: try credentialKey()) else {
-                throw OrionClientError.notPaired
-            }
+            guard let token = try storedToken() else { throw OrionClientError.notPaired }
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         return request

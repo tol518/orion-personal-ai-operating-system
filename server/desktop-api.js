@@ -10,7 +10,7 @@
 // same-origin checks, which a native client cannot satisfy.
 import express from "express";
 import { DesktopAccess, desktopBearerToken } from "./desktop-access.js";
-import { REMOTE_SERVICES } from "./remote-access.js";
+import { REMOTE_SERVICES, SELF_NODE_ID } from "./remote-access.js";
 
 // Only these gateway events reach Orion.app. Hunting, extraction, workflow-learning, and memory
 // mutation events belong to features that are out of scope for the native app in V1, so they are
@@ -273,8 +273,16 @@ export function createDesktopApi({
   router.get("/remote-access", async (_req, res) => {
     if (!remoteAccess) return fail(res, "Remote access discovery is not configured", 503);
     try {
-      const nodes = await listNodes();
-      ok(res, { nodes: await remoteAccess.describe(nodes) });
+      // listNodes() applies the same Windows decoration the browser's /api/nodes route uses.
+      // The gateway list can be empty — the Mini is not necessarily a paired execution node, and
+      // configured machines need not be nodes at all — so both are reported separately and always.
+      const nodes = await listNodes().catch(() => []);
+      const [mini, machines, described] = await Promise.all([
+        remoteAccess.describeSelf(),
+        remoteAccess.describeMachines(),
+        remoteAccess.describe(nodes),
+      ]);
+      ok(res, { mini, machines, nodes: described });
     } catch (err) {
       fail(res, err);
     }
@@ -290,21 +298,35 @@ export function createDesktopApi({
     if (!service) return fail(res, "unknown remote access service", 400);
     if (!service.scheme) return fail(res, `${service.label} is not something to launch`, 400);
     try {
-      const nodes = await listNodes();
-      const node = nodes.find((entry) => entry.id === req.params.nodeId);
-      if (!node) return fail(res, "node not found", 404);
-
-      // describe() resolves peers itself, so address resolution is identical to the read model.
-      // Calling describeNode() directly here would skip tailnet discovery and see only overrides.
-      const [described] = await remoteAccess.describe([node]);
+      // The Mini and configured machines describe themselves; everything else comes from the
+      // gateway list, through listNodes() so the Windows decoration is applied here too.
+      let described;
+      let nodeName;
+      if (req.params.nodeId === SELF_NODE_ID) {
+        described = await remoteAccess.describeSelf();
+        nodeName = "this Mini";
+      } else if (remoteAccess.findMachine(req.params.nodeId)) {
+        const machine = remoteAccess.findMachine(req.params.nodeId);
+        const machines = await remoteAccess.describeMachines();
+        described = machines.find((entry) => entry.nodeId === machine.nodeId);
+        nodeName = machine.label;
+      } else {
+        const nodes = await listNodes();
+        const node = nodes.find((entry) => entry.id === req.params.nodeId);
+        if (!node) return fail(res, "node not found", 404);
+        nodeName = node.name;
+        // describe() resolves peers itself, so address resolution is identical to the read model.
+        // Calling describeNode() directly here would skip tailnet discovery and see only overrides.
+        [described] = await remoteAccess.describe([node]);
+      }
       if (!described.host) return fail(res, described.hint ?? "no address for this node", 409);
       const available = described.services.find((entry) => entry.kind === kind);
       if (!available?.reachable) {
-        return fail(res, `${service.label} is not reachable on ${node.name}`, 409);
+        return fail(res, `${service.label} is not reachable on ${nodeName}`, 409);
       }
 
       const event = remoteAccess.recordSession({
-        nodeId: node.id,
+        nodeId: described.nodeId,
         kind,
         clientId: req.desktopClient.clientId,
       });

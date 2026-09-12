@@ -4,12 +4,14 @@ import {
   matchPeer,
   parseHostOverrides,
   REMOTE_SERVICES,
+  parseMachines,
   RemoteAccessDirectory,
+  SELF_NODE_ID,
 } from "./remote-access.js";
 
 const PEERS = [
-  { shortName: "tolgas-mac-mini", dnsName: "tolgas-mac-mini.tail0000.ts.net" },
-  { shortName: "windows-pc", dnsName: "windows-pc.tail0000.ts.net" },
+  { shortName: "tolgas-mac-mini", dnsName: "tolgas-mac-mini.tail0000.ts.net", isSelf: true },
+  { shortName: "windows-pc", dnsName: "windows-pc.tail0000.ts.net", isSelf: false },
 ];
 
 function directory(overrides = {}) {
@@ -197,4 +199,113 @@ test("describe tolerates a malformed node list", async () => {
   assert.deepEqual(await dir.describe(undefined), []);
   const [described] = await dir.describe([{}]);
   assert.equal(described.host, null);
+});
+
+test("the Mini describes itself with its tailnet name and loopback reachability", async () => {
+  const probed = [];
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => PEERS,
+    probe: async (host, port) => {
+      probed.push(`${host}:${port}`);
+      return port === 5900;
+    },
+  });
+  const mini = await dir.describeSelf();
+
+  assert.equal(mini.nodeId, SELF_NODE_ID);
+  assert.equal(mini.host, "tolgas-mac-mini.tail0000.ts.net", "the client dials the tailnet name");
+  assert.equal(mini.hostSource, "tailnet");
+  // Reachability is a local question, so the probe stays on loopback.
+  assert.deepEqual(probed.sort(), ["127.0.0.1:3283", "127.0.0.1:5900"]);
+  const screenSharing = mini.services.find((service) => service.kind === "screen-sharing");
+  assert.equal(screenSharing.reachable, true);
+  assert.equal(screenSharing.launchable, true);
+  // RDP is never offered for the Mini.
+  assert.equal(mini.services.some((service) => service.kind === "remote-desktop"), false);
+});
+
+test("the Mini still reports its services when its own name is unknown", async () => {
+  // The client falls back to the address it is already connected through.
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => [],
+    probe: async () => true,
+  });
+  const mini = await dir.describeSelf();
+  assert.equal(mini.host, null);
+  assert.equal(mini.hostSource, "unresolved");
+  assert.equal(mini.services.length > 0, true, "services are reported regardless of the address");
+  assert.match(mini.hint, /address you connected with/);
+});
+
+test("an override wins for the Mini too", async () => {
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => PEERS,
+    probe: async () => true,
+    hostOverrides: `${SELF_NODE_ID}=mini.override.ts.net`,
+  });
+  const mini = await dir.describeSelf();
+  assert.equal(mini.host, "mini.override.ts.net");
+  assert.equal(mini.hostSource, "configured");
+});
+
+test("a configured machine is listed and probed for its platform's services", async () => {
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => [],
+    probe: async (_host, port) => port === 3389,
+    machines: "Windows PC|atakarasupc.example.ts.net|windows",
+  });
+  const [machine] = await dir.describeMachines();
+
+  assert.equal(machine.nodeId, "machine:windows-pc");
+  assert.equal(machine.label, "Windows PC");
+  assert.equal(machine.platform, "windows");
+  assert.equal(machine.host, "atakarasupc.example.ts.net");
+  assert.deepEqual(machine.services.map((service) => service.kind), ["remote-desktop"]);
+  assert.equal(machine.services[0].reachable, true);
+  assert.equal(machine.services[0].scheme, "rdp");
+});
+
+test("a configured machine does not need the gateway to know it", async () => {
+  // The whole point: RDP reachability and OpenClaw node pairing are unrelated relationships.
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => [],
+    probe: async () => true,
+    machines: "PC|pc.example.ts.net|windows",
+  });
+  assert.deepEqual(await dir.describe([]), [], "no gateway nodes");
+  assert.equal((await dir.describeMachines()).length, 1);
+  assert.equal(dir.findMachine("machine:pc").label, "PC");
+  assert.equal(dir.findMachine("machine:nope"), null);
+});
+
+test("machine parsing rejects malformed, unsafe, and duplicate entries", () => {
+  const parsed = parseMachines([
+    "Good|host.example|windows",
+    "NoPlatform|host.example",
+    "BadPlatform|host.example|toaster",
+    "BadHost|host/evil|windows",
+    "|host.example|windows",
+    "Good|other.example|macos",
+    `${"x".repeat(41)}|host.example|macos`,
+  ].join(","));
+  assert.deepEqual(parsed.map((machine) => machine.label), ["Good"]);
+  assert.equal(parsed[0].nodeId, "machine:good");
+});
+
+test("machine parsing handles an empty setting", () => {
+  assert.deepEqual(parseMachines(""), []);
+  assert.deepEqual(parseMachines(undefined), []);
+});
+
+test("a mac machine is offered screen sharing rather than RDP", async () => {
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => [],
+    probe: async () => true,
+    machines: "Studio|studio.example.ts.net|macos",
+  });
+  const [machine] = await dir.describeMachines();
+  assert.deepEqual(
+    machine.services.map((service) => service.kind).sort(),
+    ["apple-remote-desktop", "screen-sharing"],
+  );
 });

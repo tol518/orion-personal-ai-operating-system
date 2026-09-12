@@ -134,6 +134,98 @@ final class CredentialStoreTests: XCTestCase {
     }
 }
 
+/// Counts reads so the Keychain access pattern can be asserted.
+private final class CountingCredentialStore: CredentialStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var tokens: [String: String]
+    private(set) var reads = 0
+
+    init(tokens: [String: String] = [:]) {
+        self.tokens = tokens
+    }
+
+    func token(forHost host: String) -> String? {
+        lock.withLock {
+            reads += 1
+            return tokens[host]
+        }
+    }
+
+    func save(token: String, forHost host: String) throws {
+        lock.withLock { tokens[host] = token }
+    }
+
+    func removeToken(forHost host: String) throws {
+        lock.withLock { tokens[host] = nil }
+    }
+}
+
+/// The Keychain must be read once per host, not once per request.
+///
+/// Reading per request made macOS re-run its access check on every call. Unless the user chooses
+/// "Always Allow", each read raises an authorization prompt — and with the event stream
+/// reconnecting, the prompts arrived faster than they could be dismissed.
+final class CredentialCachingTests: XCTestCase {
+    func testTokenIsReadOnceAcrossManyRequests() async throws {
+        let store = CountingCredentialStore(tokens: ["mini.example:4820": "token-a"])
+        let client = OrionClient(credentials: store)
+        try await client.configure(host: "mini.example")
+
+        for _ in 0..<25 {
+            let present = await client.hasStoredToken()
+            XCTAssertTrue(present)
+            // Builds an authenticated request, which is where the token is needed.
+            _ = try? await client.eventStreamRequest()
+        }
+        XCTAssertEqual(store.reads, 1, "the Keychain should be consulted once, not once per call")
+    }
+
+    func testSwitchingMiniDoesNotReuseThePreviousToken() async throws {
+        let store = CountingCredentialStore(tokens: [
+            "mini-a.example:4820": "token-a",
+            "mini-b.example:4820": "token-b",
+        ])
+        let client = OrionClient(credentials: store)
+
+        try await client.configure(host: "mini-a.example")
+        let first = try await client.eventStreamRequest()
+        XCTAssertEqual(first.value(forHTTPHeaderField: "Authorization"), "Bearer token-a")
+
+        try await client.configure(host: "mini-b.example")
+        let second = try await client.eventStreamRequest()
+        XCTAssertEqual(
+            second.value(forHTTPHeaderField: "Authorization"),
+            "Bearer token-b",
+            "a different Mini must not reuse the previous host's token"
+        )
+        XCTAssertEqual(store.reads, 2, "one read per host")
+    }
+
+    func testForgettingPairingDropsTheCachedToken() async throws {
+        let store = CountingCredentialStore(tokens: ["mini.example:4820": "token-a"])
+        let client = OrionClient(credentials: store)
+        try await client.configure(host: "mini.example")
+        let before = await client.hasStoredToken()
+        XCTAssertTrue(before)
+
+        try await client.forgetPairing()
+        let after = await client.hasStoredToken()
+        XCTAssertFalse(after, "the in-memory copy must not outlive the stored one")
+    }
+
+    func testAnUnpairedHostReportsNoToken() async throws {
+        let store = CountingCredentialStore()
+        let client = OrionClient(credentials: store)
+        try await client.configure(host: "mini.example")
+        let missing = await client.hasStoredToken()
+        XCTAssertFalse(missing)
+        // A miss is not cached, so pairing later is picked up.
+        try store.save(token: "fresh", forHost: "mini.example:4820")
+        let found = await client.hasStoredToken()
+        XCTAssertTrue(found)
+    }
+}
+
 final class ClientIdentityTests: XCTestCase {
     func testGeneratedClientIdIsSafeAndSuffixed() {
         let id = SettingsStore.generateClientId()

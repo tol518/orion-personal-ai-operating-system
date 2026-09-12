@@ -25,6 +25,20 @@ public struct RemoteAccessNode: Decodable, Sendable, Identifiable, Equatable {
     /// Present when no address could be resolved; says what to configure.
     public let hint: String?
 
+    public init(
+        nodeId: String,
+        host: String?,
+        hostSource: String,
+        services: [RemoteService],
+        hint: String?
+    ) {
+        self.nodeId = nodeId
+        self.host = host
+        self.hostSource = hostSource
+        self.services = services
+        self.hint = hint
+    }
+
     public var launchableServices: [RemoteService] {
         services.filter { $0.launchable && $0.reachable }
     }
@@ -49,7 +63,51 @@ public struct RemoteSessionGrant: Decodable, Sendable {
     }
 }
 
-struct RemoteAccessResponse: Decodable { let nodes: [RemoteAccessNode] }
+/// A machine offered by configuration rather than by the gateway's node list.
+///
+/// Reachability for remote desktop and OpenClaw node pairing are separate relationships: a PC can
+/// be perfectly reachable for RDP without ever being an execution node, and an outbound gateway
+/// channel gives no route back for a desktop session.
+public struct RemoteMachine: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { nodeId }
+    public let nodeId: String
+    public let label: String
+    public let platform: DesktopNode.Platform
+    public let host: String
+    public let hostSource: String
+    public let services: [RemoteService]
+
+    public var launchableServices: [RemoteService] {
+        services.filter { $0.launchable && $0.reachable }
+    }
+}
+
+struct RemoteAccessResponse: Decodable {
+    /// The Mini itself, reported separately because it need not be a paired execution node.
+    let mini: RemoteAccessNode?
+    let machines: [RemoteMachine]?
+    let nodes: [RemoteAccessNode]
+}
+
+extension RemoteAccessNode {
+    /// Node id the Mini reports itself under.
+    public static let miniNodeId = "orion-mini"
+
+    /// The same entry with a fallback address filled in.
+    ///
+    /// When the Mini cannot determine its own tailnet name, the address the user is already
+    /// connected through is known-good — it is how this request reached the Mini at all.
+    public func withFallbackHost(_ fallback: String?) -> RemoteAccessNode {
+        guard host == nil, let fallback, RemoteLauncher.isValidHost(fallback) else { return self }
+        return RemoteAccessNode(
+            nodeId: nodeId,
+            host: fallback,
+            hostSource: "connected-address",
+            services: services,
+            hint: nil
+        )
+    }
+}
 
 /// Turns a grant into a URL for the system to open.
 ///

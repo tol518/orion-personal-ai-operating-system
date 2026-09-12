@@ -92,7 +92,21 @@ swipe to, like another desktop.
 **On Windows**, enable Settings → System → **Remote Desktop** (needs Windows Pro or Enterprise),
 and install the **Windows App** from the Mac App Store on this Mac.
 
-If a node shows no address, map it on the Mini:
+The Mini gets its own card whether or not it is a paired execution node — it hosts the runtime,
+and on a single-machine deployment the gateway's node list is empty.
+
+Machines that are not execution nodes at all are listed by configuration on the Mini:
+
+```sh
+ORION_REMOTE_ACCESS_MACHINES=Windows PC|pc.your-tailnet.ts.net|windows
+```
+
+Being reachable for remote desktop and being an OpenClaw node are separate relationships. A node
+reaches the gateway over its own outbound channel, which gives the gateway a way to send commands
+but gives this Mac no route back for a desktop session — that needs the machine on the same
+private network.
+
+If a gateway node is listed but shows no address, map it:
 
 ```sh
 ORION_REMOTE_ACCESS_HOSTS=node-abc=pc.your-tailnet.ts.net

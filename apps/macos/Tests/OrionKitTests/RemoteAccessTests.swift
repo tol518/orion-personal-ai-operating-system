@@ -139,6 +139,31 @@ final class RemoteAccessDecodingTests: XCTestCase {
         XCTAssertNotNil(ghost.hint)
     }
 
+    func testDecodesConfiguredMachines() throws {
+        let json = """
+        {"mini":null,"nodes":[],"machines":[
+          {"nodeId":"machine:windows-pc","label":"Windows PC","platform":"windows",
+           "host":"pc.tail0000.ts.net","hostSource":"configured",
+           "services":[{"kind":"remote-desktop","label":"Remote Desktop","port":3389,"scheme":"rdp","launchable":true,"reachable":true}]}
+        ]}
+        """
+        let response = try JSONDecoder().decode(RemoteAccessResponse.self, from: Data(json.utf8))
+        let machine = try XCTUnwrap(response.machines?.first)
+        XCTAssertEqual(machine.label, "Windows PC")
+        XCTAssertEqual(machine.platform, .windows)
+        XCTAssertEqual(machine.launchableServices.map(\.kind), ["remote-desktop"])
+
+        let grant = RemoteSessionGrant(host: machine.host, port: 3389, scheme: "rdp", service: "remote-desktop")
+        XCTAssertEqual(try RemoteLauncher.url(for: grant).absoluteString, "rdp://pc.tail0000.ts.net:3389")
+    }
+
+    func testMachinesAreOptionalForOlderMinis() throws {
+        // A Mini running a build without configured machines omits the field entirely.
+        let json = #"{"mini":null,"nodes":[]}"#
+        let response = try JSONDecoder().decode(RemoteAccessResponse.self, from: Data(json.utf8))
+        XCTAssertNil(response.machines)
+    }
+
     func testAnUnreachableServiceIsNotLaunchable() throws {
         let json = """
         {"nodes":[{"nodeId":"n","host":"h.example","hostSource":"configured","hint":null,

@@ -41,6 +41,10 @@ public final class OrionStore {
     public private(set) var nodes: [DesktopNode] = []
     /// Remote-desktop availability per node. Empty when the Mini has no discovery configured.
     public private(set) var remoteAccess: [RemoteAccessNode] = []
+    /// The Mini's own entry. Present even when it is not a paired execution node.
+    public private(set) var miniRemoteAccess: RemoteAccessNode?
+    /// Machines configured on the Mini, independent of the gateway's node list.
+    public private(set) var remoteMachines: [RemoteMachine] = []
     public private(set) var remoteAccessUnavailable: String?
     public private(set) var launchingNodeId: String?
 
@@ -182,6 +186,8 @@ public final class OrionStore {
         sessions = []
         nodes = []
         remoteAccess = []
+        miniRemoteAccess = nil
+        remoteMachines = []
         messages = []
         selectedSessionKey = nil
         streamingReply = nil
@@ -224,10 +230,15 @@ public final class OrionStore {
     /// is a configuration state to explain rather than an error to alarm the user with.
     public func refreshRemoteAccess() async {
         do {
-            remoteAccess = try await client.remoteAccess()
+            let result = try await client.remoteAccess()
+            miniRemoteAccess = result.mini
+            remoteMachines = result.machines
+            remoteAccess = result.nodes
             remoteAccessUnavailable = nil
         } catch let error as OrionClientError {
             remoteAccess = []
+            miniRemoteAccess = nil
+            remoteMachines = []
             switch error {
             case .desktopAccessDisabled, .desktopAPIMissing:
                 remoteAccessUnavailable = "This Mini does not offer remote-desktop discovery yet."
@@ -238,6 +249,8 @@ public final class OrionStore {
             }
         } catch {
             remoteAccess = []
+            miniRemoteAccess = nil
+            remoteMachines = []
             remoteAccessUnavailable = error.localizedDescription
         }
     }
