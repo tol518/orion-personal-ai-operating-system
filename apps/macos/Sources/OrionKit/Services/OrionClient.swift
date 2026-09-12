@@ -72,7 +72,12 @@ public actor OrionClient {
         } else {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.timeoutIntervalForRequest = 20
-            configuration.waitsForConnectivity = true
+            // Deliberately false. waitsForConnectivity makes a request to an unreachable host
+            // wait indefinitely instead of failing, and timeoutIntervalForRequest does not apply
+            // while it waits — so a mistyped address hangs the UI rather than reporting an error.
+            configuration.waitsForConnectivity = false
+            // A hard ceiling regardless of activity, so nothing can wait forever.
+            configuration.timeoutIntervalForResource = 60
             self.session = URLSession(configuration: configuration)
         }
         let decoder = JSONDecoder()

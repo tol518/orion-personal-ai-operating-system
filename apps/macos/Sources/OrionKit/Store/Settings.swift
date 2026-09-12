@@ -20,7 +20,9 @@ public struct OrionSettings: Sendable, Equatable {
 /// The plan forbids hardcoding hosts, so there is no default address: an unconfigured app shows
 /// the connection screen and asks for one. The client id is generated once and reused, because
 /// the Mini's allowlist and revocation are keyed on it.
-public struct SettingsStore {
+/// `@unchecked` because `UserDefaults` is not marked `Sendable` but is documented as thread-safe,
+/// and this type holds nothing else. Intents read settings off the main actor.
+public struct SettingsStore: @unchecked Sendable {
     private enum Key {
         static let host = "orion.host"
         static let clientId = "orion.clientId"
