@@ -22,9 +22,44 @@ final class RemoteLauncherTests: XCTestCase {
         XCTAssertEqual(url.absoluteString, "vnc://mac-mini.tail0000.ts.net:5900")
     }
 
-    func testBuildsAnRDPURL() throws {
-        let url = try RemoteLauncher.url(for: grant(host: "pc.tail0000.ts.net", port: 3389, scheme: "rdp"))
-        XCTAssertEqual(url.absoluteString, "rdp://pc.tail0000.ts.net:3389")
+    func testRDPProducesAConnectionFileRatherThanAURL() throws {
+        // Microsoft's documented rdp:// URI is a parameter list Foundation cannot construct
+        // ("=" and ":" are invalid in an authority), and a bare rdp://host:port opens the app
+        // without connecting. A .rdp file is the documented, unambiguous path.
+        let target = try RemoteLauncher.target(for: grant(host: "pc.tail0000.ts.net", port: 3389, scheme: "rdp"))
+        guard case .connectionFile(let contents, let filename) = target else {
+            return XCTFail("expected a connection file, got \(target)")
+        }
+        XCTAssertEqual(filename, "orion-pc-tail0000-ts-net.rdp")
+        XCTAssertTrue(contents.contains("full address:s:pc.tail0000.ts.net:3389"))
+        XCTAssertTrue(contents.contains("prompt for credentials:i:1"))
+    }
+
+    func testAConnectionFileNeverCarriesACredential() throws {
+        let target = try RemoteLauncher.target(for: grant(host: "pc.example", port: 3389, scheme: "rdp"))
+        guard case .connectionFile(let contents, _) = target else { return XCTFail("expected a file") }
+        for forbidden in ["password", "username", "token", "secret"] {
+            XCTAssertFalse(
+                contents.lowercased().contains(forbidden),
+                "a connection file must not carry \(forbidden)"
+            )
+        }
+    }
+
+    func testScreenSharingStillUsesAURL() throws {
+        let target = try RemoteLauncher.target(for: grant())
+        guard case .url(let url) = target else { return XCTFail("expected a url, got \(target)") }
+        XCTAssertEqual(url.absoluteString, "vnc://mac-mini.tail0000.ts.net:5900")
+    }
+
+    func testRDPValidationStillAppliesBeforeFormatting() throws {
+        // The file path must not become a way around host validation: the host is written into
+        // a file the window server then opens.
+        XCTAssertThrowsError(try RemoteLauncher.target(for: grant(host: "pc/evil", scheme: "rdp")))
+        XCTAssertThrowsError(try RemoteLauncher.target(for: grant(host: "pc\nevil", scheme: "rdp")))
+        XCTAssertThrowsError(try RemoteLauncher.target(for: grant(host: "../../etc/hosts", scheme: "rdp")))
+        XCTAssertThrowsError(try RemoteLauncher.target(for: grant(port: 0, scheme: "rdp")))
+        XCTAssertThrowsError(try RemoteLauncher.target(for: grant(scheme: "ssh")))
     }
 
     func testAcceptsAnIPAddress() throws {
@@ -154,7 +189,10 @@ final class RemoteAccessDecodingTests: XCTestCase {
         XCTAssertEqual(machine.launchableServices.map(\.kind), ["remote-desktop"])
 
         let grant = RemoteSessionGrant(host: machine.host, port: 3389, scheme: "rdp", service: "remote-desktop")
-        XCTAssertEqual(try RemoteLauncher.url(for: grant).absoluteString, "rdp://pc.tail0000.ts.net:3389")
+        guard case .connectionFile(let contents, _) = try RemoteLauncher.target(for: grant) else {
+            return XCTFail("expected a connection file")
+        }
+        XCTAssertTrue(contents.contains("full address:s:pc.tail0000.ts.net:3389"))
     }
 
     func testMachinesAreOptionalForOlderMinis() throws {

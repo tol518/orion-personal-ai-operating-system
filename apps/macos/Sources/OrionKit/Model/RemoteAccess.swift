@@ -163,6 +163,39 @@ public enum RemoteLauncher {
         }
     }
 
+    /// How a validated grant should be handed to the system.
+    public enum LaunchTarget: Equatable {
+        /// Opened directly, as Screen Sharing accepts vnc://host:port.
+        case url(URL)
+        /// Written to a temporary file and opened, which is how the Windows App takes a
+        /// connection. Microsoft's documented rdp:// URI is a parameter list that Foundation
+        /// cannot construct — `=` and `:` are not valid in a URL authority — and a bare
+        /// rdp://host:port opens the app without connecting to anything.
+        case connectionFile(contents: String, filename: String)
+    }
+
+    /// Validates a grant and returns how to launch it.
+    public static func target(for grant: RemoteSessionGrant) throws -> LaunchTarget {
+        let scheme = grant.scheme.lowercased()
+        guard allowedSchemes[scheme] != nil else { throw LaunchError.unsupportedScheme(grant.scheme) }
+        guard (1...65_535).contains(grant.port) else { throw LaunchError.invalidPort(grant.port) }
+        guard isValidHost(grant.host) else { throw LaunchError.invalidHost(grant.host) }
+
+        if scheme == "rdp" {
+            // Only the destination. No credential is ever written to this file: the Windows App
+            // prompts, and the user's password stays between them and Windows.
+            let contents = [
+                "full address:s:\(grant.host):\(grant.port)",
+                "prompt for credentials:i:1",
+                "administrative session:i:0",
+                "screen mode id:i:2",
+            ].joined(separator: "\n") + "\n"
+            let safeName = grant.host.replacingOccurrences(of: ".", with: "-")
+            return .connectionFile(contents: contents, filename: "orion-\(safeName).rdp")
+        }
+        return .url(try url(for: grant))
+    }
+
     /// Validates a grant and returns the URL to hand to the system.
     public static func url(for grant: RemoteSessionGrant) throws -> URL {
         let scheme = grant.scheme.lowercased()

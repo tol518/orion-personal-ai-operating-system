@@ -269,7 +269,7 @@ public final class OrionStore {
         defer { launchingNodeId = nil }
         do {
             let grant = try await client.openRemoteSession(nodeId: nodeId, kind: kind)
-            let url = try RemoteLauncher.url(for: grant)
+            let url = try Self.launchURL(for: grant)
             guard opener(url) else {
                 let app = RemoteLauncher.targetApplication(forScheme: grant.scheme) ?? "the viewer"
                 lastError = "macOS could not open \(app) for \(grant.host)."
@@ -456,6 +456,25 @@ public final class OrionStore {
                     ? "A run ended without completing."
                     : "An agent finished replying."
             )
+        }
+    }
+
+    /// Resolves a grant to something the window server can open.
+    ///
+    /// RDP needs a connection file rather than a URL, so one is written to the caches directory
+    /// and reused per host. It holds only the destination — the Windows App prompts for
+    /// credentials, which never pass through Orion.
+    static func launchURL(for grant: RemoteSessionGrant) throws -> URL {
+        switch try RemoteLauncher.target(for: grant) {
+        case .url(let url):
+            return url
+        case .connectionFile(let contents, let filename):
+            let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Orion", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let file = directory.appendingPathComponent(filename)
+            try contents.write(to: file, atomically: true, encoding: .utf8)
+            return file
         }
     }
 
