@@ -553,6 +553,7 @@ app.use(
     modelOptionsFromConfig,
     subscribe: subscribeDesktopEvents,
     remoteAccess,
+    usageReport: buildUsageReport,
     decorateNodes: (payload) => windowsScreen.decorateNodeList(payload),
   }),
 );
@@ -603,104 +604,111 @@ app.delete("/api/nodes/:nodeId", async (req, res) => {
   }
 });
 
+// Shared usage report. The browser (/api/usage) and the native client
+// (/api/v1/desktop/usage) both read this, so gateway usage, Codex desktop usage, pricing, and
+// the weekly-limit reading cannot drift between the two surfaces.
+async function buildUsageReport(range) {
+  const rawReport = await gateway.request("sessions.usage", { range });
+  const { report, pricing } = applyPricingToUsageReport(rawReport);
+  const bounds = reportDateBounds(report);
+  const supplementalSessions = [];
+  let codexDesktop = {
+    totals: {},
+    sessions: [],
+    weeklyLimit: null,
+    pricedModels: [],
+    unpricedModels: [],
+  };
+  if (bounds) {
+    try {
+      codexDesktop = await loadCodexDesktopUsage(bounds);
+    } catch (error) {
+      console.warn(`[jarvis-bff] Codex desktop usage unavailable: ${error.message}`);
+    }
+    const listed = await gateway.request("sessions.list", {
+      agentId: "codex",
+      limit: 1000,
+    });
+    const gatewayKeys = new Set((report.sessions ?? []).map((session) => session.key));
+    const candidates = (listed.sessions ?? []).filter(
+      (session) =>
+        typeof session.key === "string" &&
+        !gatewayKeys.has(session.key) &&
+        Number(session.updatedAt ?? 0) >= bounds.startMs,
+    );
+    const histories = await Promise.allSettled(
+      candidates.map(async (session) => ({
+        session,
+        history: await gateway.request("chat.history", {
+          sessionKey: session.key,
+          agentId: "codex",
+          limit: 1000,
+        }),
+      })),
+    );
+    for (const result of histories) {
+      if (result.status !== "fulfilled") continue;
+      const { session, history } = result.value;
+      const modelUsage = summarizeHistoryModelUsage(
+        history.messages,
+        bounds.startMs,
+        bounds.endMs,
+        { provider: "openai", model: session.model },
+      );
+      const estimate = estimateModelUsage(modelUsage);
+      for (const model of estimate.pricedModels) {
+        if (!pricing.pricedModels.includes(model)) pricing.pricedModels.push(model);
+      }
+      for (const model of estimate.unpricedModels) {
+        if (!pricing.unpricedModels.includes(model)) pricing.unpricedModels.push(model);
+      }
+      supplementalSessions.push({
+        key: session.key,
+        agentId: "codex",
+        totals: {
+          ...summarizeHistoryUsage(history.messages, bounds.startMs, bounds.endMs),
+          ...estimate.totals,
+        },
+      });
+    }
+  }
+  for (const model of codexDesktop.pricedModels) {
+    if (!pricing.pricedModels.includes(model)) pricing.pricedModels.push(model);
+  }
+  for (const model of codexDesktop.unpricedModels) {
+    if (!pricing.unpricedModels.includes(model)) pricing.unpricedModels.push(model);
+  }
+  pricing.pricedModels.sort();
+  pricing.unpricedModels.sort();
+  const gatewayAttribution = buildUsageAttribution(report, supplementalSessions);
+  const codexGateway = gatewayAttribution.agents.codex;
+  const codex = addUsageTotals(codexGateway, codexDesktop.totals);
+  return {
+    ...report,
+    attribution: {
+      ...gatewayAttribution,
+      agents: { ...gatewayAttribution.agents, codex },
+      combined: addUsageTotals(gatewayAttribution.agents.main, codex),
+      sources: { codexGateway, codexDesktop: codexDesktop.totals },
+      codexWeeklyLimit: codexDesktop.weeklyLimit,
+      sessions: [
+        ...gatewayAttribution.sessions,
+        ...codexDesktop.sessions.map((session) => ({
+          key: session.key,
+          agentId: "codex",
+          totals: session.totals,
+          source: "codex-desktop",
+        })),
+      ],
+      pricing,
+    },
+  };
+}
+
 app.get("/api/usage", async (req, res) => {
   const range = typeof req.query.range === "string" ? req.query.range : "7d";
   try {
-    const rawReport = await gateway.request("sessions.usage", { range });
-    const { report, pricing } = applyPricingToUsageReport(rawReport);
-    const bounds = reportDateBounds(report);
-    const supplementalSessions = [];
-    let codexDesktop = {
-      totals: {},
-      sessions: [],
-      weeklyLimit: null,
-      pricedModels: [],
-      unpricedModels: [],
-    };
-    if (bounds) {
-      try {
-        codexDesktop = await loadCodexDesktopUsage(bounds);
-      } catch (error) {
-        console.warn(`[jarvis-bff] Codex desktop usage unavailable: ${error.message}`);
-      }
-      const listed = await gateway.request("sessions.list", {
-        agentId: "codex",
-        limit: 1000,
-      });
-      const gatewayKeys = new Set((report.sessions ?? []).map((session) => session.key));
-      const candidates = (listed.sessions ?? []).filter(
-        (session) =>
-          typeof session.key === "string" &&
-          !gatewayKeys.has(session.key) &&
-          Number(session.updatedAt ?? 0) >= bounds.startMs,
-      );
-      const histories = await Promise.allSettled(
-        candidates.map(async (session) => ({
-          session,
-          history: await gateway.request("chat.history", {
-            sessionKey: session.key,
-            agentId: "codex",
-            limit: 1000,
-          }),
-        })),
-      );
-      for (const result of histories) {
-        if (result.status !== "fulfilled") continue;
-        const { session, history } = result.value;
-        const modelUsage = summarizeHistoryModelUsage(
-          history.messages,
-          bounds.startMs,
-          bounds.endMs,
-          { provider: "openai", model: session.model },
-        );
-        const estimate = estimateModelUsage(modelUsage);
-        for (const model of estimate.pricedModels) {
-          if (!pricing.pricedModels.includes(model)) pricing.pricedModels.push(model);
-        }
-        for (const model of estimate.unpricedModels) {
-          if (!pricing.unpricedModels.includes(model)) pricing.unpricedModels.push(model);
-        }
-        supplementalSessions.push({
-          key: session.key,
-          agentId: "codex",
-          totals: {
-            ...summarizeHistoryUsage(history.messages, bounds.startMs, bounds.endMs),
-            ...estimate.totals,
-          },
-        });
-      }
-    }
-    for (const model of codexDesktop.pricedModels) {
-      if (!pricing.pricedModels.includes(model)) pricing.pricedModels.push(model);
-    }
-    for (const model of codexDesktop.unpricedModels) {
-      if (!pricing.unpricedModels.includes(model)) pricing.unpricedModels.push(model);
-    }
-    pricing.pricedModels.sort();
-    pricing.unpricedModels.sort();
-    const gatewayAttribution = buildUsageAttribution(report, supplementalSessions);
-    const codexGateway = gatewayAttribution.agents.codex;
-    const codex = addUsageTotals(codexGateway, codexDesktop.totals);
-    ok(res, {
-      ...report,
-      attribution: {
-        ...gatewayAttribution,
-        agents: { ...gatewayAttribution.agents, codex },
-        combined: addUsageTotals(gatewayAttribution.agents.main, codex),
-        sources: { codexGateway, codexDesktop: codexDesktop.totals },
-        codexWeeklyLimit: codexDesktop.weeklyLimit,
-        sessions: [
-          ...gatewayAttribution.sessions,
-          ...codexDesktop.sessions.map((session) => ({
-            key: session.key,
-            agentId: "codex",
-            totals: session.totals,
-            source: "codex-desktop",
-          })),
-        ],
-        pricing,
-      },
-    });
+    ok(res, await buildUsageReport(range));
   } catch (err) {
     fail(res, err);
   }
