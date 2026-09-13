@@ -207,6 +207,11 @@ public actor OrionClient {
         return response.nodes
     }
 
+    /// Token and cost usage over a range such as "7d" or "30d".
+    public func usage(range: String = "7d") async throws -> UsageSummary {
+        try await send("usage?range=\(range)")
+    }
+
     /// Which native remote-desktop services the Mini can see, for itself and for each node.
     ///
     /// The Mini's own entry gets the connected address as a fallback, so a Mini that cannot read

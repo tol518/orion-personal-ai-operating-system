@@ -45,6 +45,12 @@ public final class OrionStore {
     public private(set) var miniRemoteAccess: RemoteAccessNode?
     /// Machines configured on the Mini, independent of the gateway's node list.
     public private(set) var remoteMachines: [RemoteMachine] = []
+
+    // MARK: Usage
+    public private(set) var usage: UsageSummary?
+    public private(set) var usageRange = "7d"
+    public private(set) var isLoadingUsage = false
+    public private(set) var usageUnavailable: String?
     public private(set) var remoteAccessUnavailable: String?
     public private(set) var launchingNodeId: String?
 
@@ -188,6 +194,7 @@ public final class OrionStore {
         remoteAccess = []
         miniRemoteAccess = nil
         remoteMachines = []
+        usage = nil
         messages = []
         selectedSessionKey = nil
         streamingReply = nil
@@ -252,6 +259,33 @@ public final class OrionStore {
             miniRemoteAccess = nil
             remoteMachines = []
             remoteAccessUnavailable = error.localizedDescription
+        }
+    }
+
+    /// Reads usage for the selected range.
+    ///
+    /// A Mini without usage reporting answers 503, which is a configuration state to explain
+    /// rather than an error to alarm the user with.
+    public func refreshUsage(range: String? = nil) async {
+        if let range { usageRange = range }
+        isLoadingUsage = true
+        defer { isLoadingUsage = false }
+        do {
+            usage = try await client.usage(range: usageRange)
+            usageUnavailable = nil
+        } catch let error as OrionClientError {
+            usage = nil
+            switch error {
+            case .desktopAPIMissing, .desktopAccessDisabled:
+                usageUnavailable = "This Mini does not report usage yet."
+            case .server(503, let message):
+                usageUnavailable = message
+            default:
+                usageUnavailable = error.localizedDescription
+            }
+        } catch {
+            usage = nil
+            usageUnavailable = error.localizedDescription
         }
     }
 

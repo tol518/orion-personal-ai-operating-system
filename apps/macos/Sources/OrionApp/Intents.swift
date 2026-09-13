@@ -59,6 +59,34 @@ struct SendToOrionIntent: AppIntent {
     }
 }
 
+struct CheckOrionUsageIntent: AppIntent {
+    static let title: LocalizedStringResource = "Check Orion Usage"
+    static let description = IntentDescription(
+        "Reports token spend and the Codex weekly allowance.",
+        categoryName: "Usage"
+    )
+    static let openAppWhenRun = false
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let sentence = await OrionIntentService().usageSentence()
+        return .result(dialog: IntentDialog(stringLiteral: sentence))
+    }
+}
+
+struct CheckCodexAllowanceIntent: AppIntent {
+    static let title: LocalizedStringResource = "Check Codex Allowance"
+    static let description = IntentDescription(
+        "Reports how much of the Codex weekly allowance is left.",
+        categoryName: "Usage"
+    )
+    static let openAppWhenRun = false
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let sentence = await OrionIntentService().codexAllowanceSentence()
+        return .result(dialog: IntentDialog(stringLiteral: sentence))
+    }
+}
+
 struct OpenOrionIntent: AppIntent {
     static let title: LocalizedStringResource = "Open Orion"
     static let description = IntentDescription("Brings the Orion window to the front.", categoryName: "Status")
@@ -98,6 +126,27 @@ struct OrionShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Message Orion",
             systemImageName: "bubble.left.and.bubble.right"
+        )
+        AppShortcut(
+            intent: CheckOrionUsageIntent(),
+            phrases: [
+                "Check \(.applicationName) usage",
+                "\(.applicationName) usage",
+                "How much have I spent on \(.applicationName)",
+                "What is my \(.applicationName) spend",
+            ],
+            shortTitle: "Orion Usage",
+            systemImageName: "chart.bar"
+        )
+        AppShortcut(
+            intent: CheckCodexAllowanceIntent(),
+            phrases: [
+                "How much Codex do I have left in \(.applicationName)",
+                "\(.applicationName) Codex allowance",
+                "Check \(.applicationName) Codex limit",
+            ],
+            shortTitle: "Codex Allowance",
+            systemImageName: "gauge.with.needle"
         )
         AppShortcut(
             intent: OpenOrionIntent(),

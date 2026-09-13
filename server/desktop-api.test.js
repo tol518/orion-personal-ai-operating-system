@@ -5,6 +5,7 @@ import { DesktopAccess } from "./desktop-access.js";
 import { RemoteAccessDirectory } from "./remote-access.js";
 import {
   createDesktopApi,
+  toUsageSummary,
   desktopEventFrame,
   DESKTOP_EVENTS,
   toNodeSummary,
@@ -49,6 +50,25 @@ async function boot({ gateway = fakeGateway(), access, deps = {} } = {}) {
           { shortName: "mac-mini", dnsName: "mac-mini.tail0000.ts.net" },
         ],
         probe: async (_host, port) => port === 5900,
+      }),
+      usageReport: async (range) => ({
+        range,
+        attribution: {
+          agents: {
+            main: { totalTokens: 1000, totalCost: 1.5, input: 700, output: 300, cacheRead: 50 },
+            codex: { totalTokens: 500, totalCost: 0.25, input: 400, output: 100, cacheRead: 0 },
+            idle: { totalTokens: 0, totalCost: 0 },
+          },
+          combined: { totalTokens: 1500, totalCost: 1.75, input: 1100, output: 400, cacheRead: 50 },
+          codexWeeklyLimit: {
+            usedPercent: 42.567,
+            remainingPercent: 57.433,
+            planType: "pro",
+            resetsAt: 1_757_520_000_000,
+            updatedAt: 1_757_000_000_000,
+          },
+          pricing: { unpricedModels: ["some/unpriced-model"], pricedModels: [] },
+        },
       }),
       subscribe: (res) => {
         subscribers.add(res);
@@ -493,6 +513,72 @@ test("toNodeSummary tolerates a malformed node", () => {
     status: "unknown",
     capabilities: [],
   });
+});
+
+test("usage is projected for the desktop surface", async (t) => {
+  const app = await boot();
+  t.after(() => app.close());
+  const { body } = await pairToken(app.base);
+  const usage = await (await fetch(`${app.base}/usage`, { headers: authed(body.token) })).json();
+
+  assert.equal(usage.range, "7d");
+  assert.deepEqual(usage.total, {
+    totalTokens: 1500,
+    totalCost: 1.75,
+    input: 1100,
+    output: 400,
+    cacheRead: 50,
+  });
+  // Agents with no usage are dropped, and the rest sort by token count.
+  assert.deepEqual(usage.agents.map((agent) => agent.agentId), ["main", "codex"]);
+  assert.equal(usage.codexWeeklyLimit.remainingPercent, 57.4);
+  assert.equal(usage.codexWeeklyLimit.planType, "pro");
+  assert.equal(usage.codexWeeklyLimit.resetsAt, "2025-09-10T16:00:00.000Z");
+  // A model without a known rate means the cost is a floor, and the client is told so.
+  assert.equal(usage.pricing.estimated, true);
+  assert.deepEqual(usage.pricing.unpricedModels, ["some/unpriced-model"]);
+});
+
+test("usage accepts only a well-formed range and requires auth", async (t) => {
+  const app = await boot();
+  t.after(() => app.close());
+  const { body } = await pairToken(app.base);
+
+  assert.equal((await fetch(`${app.base}/usage`)).status, 401);
+  const bad = await fetch(`${app.base}/usage?range=../../etc`, { headers: authed(body.token) });
+  assert.equal(bad.status, 400);
+  const good = await fetch(`${app.base}/usage?range=30d`, { headers: authed(body.token) });
+  assert.equal((await good.json()).range, "30d");
+});
+
+test("usage answers 503 when the report builder is not wired", async (t) => {
+  const app = await boot({ deps: { usageReport: undefined } });
+  t.after(() => app.close());
+  const { body } = await pairToken(app.base);
+  assert.equal((await fetch(`${app.base}/usage`, { headers: authed(body.token) })).status, 503);
+});
+
+test("toUsageSummary tolerates a report with nothing in it", () => {
+  const empty = toUsageSummary({}, "7d");
+  assert.deepEqual(empty.total, {
+    totalTokens: 0,
+    totalCost: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+  });
+  assert.deepEqual(empty.agents, []);
+  assert.equal(empty.codexWeeklyLimit, null);
+  assert.equal(empty.pricing.estimated, false, "no unpriced models means the cost is complete");
+});
+
+test("toUsageSummary does not invent a weekly limit from a malformed one", () => {
+  const summary = toUsageSummary(
+    { attribution: { codexWeeklyLimit: { usedPercent: 10, remainingPercent: 90, resetsAt: "nonsense" } } },
+    "7d",
+  );
+  assert.equal(summary.codexWeeklyLimit.resetsAt, null);
+  assert.equal(summary.codexWeeklyLimit.remainingPercent, 90);
 });
 
 test("remote access reports reachable services per node", async (t) => {

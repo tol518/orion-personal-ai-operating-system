@@ -1,7 +1,7 @@
 import SwiftUI
 
 public enum OrionScreen: String, CaseIterable, Identifiable, Hashable {
-    case home, agents, chat, nodes, settings
+    case home, agents, chat, nodes, usage, settings
 
     public var id: String { rawValue }
 
@@ -11,6 +11,7 @@ public enum OrionScreen: String, CaseIterable, Identifiable, Hashable {
         case .agents: return "Agents"
         case .chat: return "Chat"
         case .nodes: return "Nodes"
+        case .usage: return "Usage"
         case .settings: return "Settings"
         }
     }
@@ -21,6 +22,7 @@ public enum OrionScreen: String, CaseIterable, Identifiable, Hashable {
         case .agents: return "person.2.circle"
         case .chat: return "bubble.left.and.bubble.right"
         case .nodes: return "desktopcomputer.and.macbook"
+        case .usage: return "chart.bar"
         case .settings: return "gearshape"
         }
     }
@@ -66,6 +68,7 @@ public struct RootView: View {
             case .agents: AgentsView(store: store, onOpenChat: { screen = .chat })
             case .chat: ChatView(store: store)
             case .nodes: NodesView(store: store)
+            case .usage: UsageView(store: store)
             case .settings: SettingsView(store: store)
             }
         }
