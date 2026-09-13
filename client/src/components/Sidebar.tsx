@@ -2,18 +2,23 @@ import {
   Activity,
   BrainCircuit,
   BriefcaseBusiness,
+  ChartNoAxesCombined,
   CircleHelp,
   Cpu,
   FileSpreadsheet,
+  FlaskConical,
+  Landmark,
   MessageSquare,
   Monitor,
+  Plug,
   Users,
   Workflow,
   Zap,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import type { OrionPluginUi } from "../lib/plugin-types";
 
-export type View =
+export type CoreView =
   | "overview"
   | "agent-room"
   | "chat"
@@ -24,8 +29,9 @@ export type View =
   | "screens"
   | "usage"
   | "workflows";
+export type View = CoreView | (string & {});
 
-export const NAV: { key: View; icon: LucideIcon; label: string }[] = [
+export const NAV: { key: CoreView; icon: LucideIcon; label: string }[] = [
   { key: "overview", icon: Activity, label: "Overview" },
   { key: "agent-room", icon: Users, label: "Agent Room" },
   { key: "chat", icon: MessageSquare, label: "Chat" },
@@ -37,6 +43,17 @@ export const NAV: { key: View; icon: LucideIcon; label: string }[] = [
   { key: "screens", icon: Monitor, label: "Screens" },
   { key: "usage", icon: Zap, label: "Usage" },
 ];
+
+const PLUGIN_ICONS: Record<OrionPluginUi["icon"], LucideIcon> = {
+  chart: ChartNoAxesCombined,
+  flask: FlaskConical,
+  landmark: Landmark,
+  plug: Plug,
+};
+
+export function pluginIcon(icon: OrionPluginUi["icon"]): LucideIcon {
+  return PLUGIN_ICONS[icon] ?? Plug;
+}
 
 export function navPresentation(item: (typeof NAV)[number], huntingUnlocked: boolean, memoryUnlocked: boolean) {
   return ((item.key === "hunting" && !huntingUnlocked) || (item.key === "memory" && !memoryUnlocked))
@@ -50,12 +67,14 @@ export default function Sidebar({
   onNavigate,
   huntingUnlocked,
   memoryUnlocked,
+  pluginNavigation,
 }: {
   connected: boolean;
   active: View;
   onNavigate: (v: View) => void;
   huntingUnlocked: boolean;
   memoryUnlocked: boolean;
+  pluginNavigation: OrionPluginUi[];
 }) {
   return (
     <aside className="orion-sidebar hidden w-56 shrink-0 flex-col border-r border-hudborder bg-surface-1/80 backdrop-blur md:flex">
@@ -91,6 +110,23 @@ export default function Sidebar({
             >
               <Icon size={18} />
               <span>{presentation.label}</span>
+            </button>
+          );
+        })}
+        {pluginNavigation.map((item) => {
+          const Icon = pluginIcon(item.icon);
+          return (
+            <button
+              key={item.route}
+              onClick={() => onNavigate(item.route)}
+              className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                active === item.route
+                  ? "bg-accent/10 text-accent-hover shadow-glow-sm"
+                  : "text-gray-400 hover:bg-surface-3 hover:text-gray-200"
+              }`}
+            >
+              <Icon size={18} />
+              <span>{item.label}</span>
             </button>
           );
         })}

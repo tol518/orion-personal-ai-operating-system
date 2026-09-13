@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { Bot, Code2, Cpu, Gauge, Layers, Sigma, Zap } from "lucide-react";
 import { api, type UsageAttribution, type UsageReport, type UsageTotals } from "./lib/api";
 import { useStreamEvent } from "./hooks/useStreamEvent";
-import Sidebar, { NAV, navPresentation, type View } from "./components/Sidebar";
+import Sidebar, { NAV, navPresentation, pluginIcon, type View } from "./components/Sidebar";
 import JarvisCore from "./components/JarvisCore";
 import HoloPanel from "./components/HoloPanel";
 import StatTile from "./components/StatTile";
@@ -15,6 +15,8 @@ import Chat from "./components/Chat";
 import MemoryPage from "./components/MemoryPage";
 import HuntingAccessDialog from "./components/HuntingAccessDialog";
 import MemoryAccessDialog from "./components/MemoryAccessDialog";
+import PluginPage from "./components/PluginPage";
+import type { OrionPlugin } from "./lib/plugin-types";
 
 const ExtractionPage = lazy(() => import("./components/ExtractionPage"));
 const ScreensPage = lazy(() => import("./components/ScreensPage"));
@@ -78,12 +80,12 @@ function codexWeeklySummary(
   return { value: `${Math.round(limit.remainingPercent)}%`, sub: `left · resets ${reset}` };
 }
 
-const NAV_KEYS = NAV.map((n) => n.key);
+const NAV_KEYS = new Set<string>(NAV.map((n) => n.key));
 const SELECTED_CHAT_KEY = "jarvis-selected-chat";
 
 function viewFromHash(): View {
-  const h = window.location.hash.slice(1).split("?")[0] as View;
-  return NAV_KEYS.includes(h) ? h : "overview";
+  const h = window.location.hash.slice(1).split("?")[0];
+  return NAV_KEYS.has(h) || /^[a-z][a-z0-9-]{1,39}$/.test(h) ? h : "overview";
 }
 
 function agentIdFromSessionKey(key: string | null): string {
@@ -110,6 +112,7 @@ export default function App() {
   const [usage, setUsage] = useState<UsageReport | null>(null);
   const [sessions, setSessions] = useState<AgentRoomSession[]>([]);
   const [agents, setAgents] = useState<AgentRoomAgent[]>([]);
+  const [plugins, setPlugins] = useState<OrionPlugin[]>([]);
   const [huntingUnlocked, setHuntingUnlocked] = useState<boolean | null>(null);
   const [huntingAccessOpen, setHuntingAccessOpen] = useState(false);
   const [memoryUnlocked, setMemoryUnlocked] = useState<boolean | null>(null);
@@ -172,6 +175,20 @@ export default function App() {
       })
       .catch(() => {
         if (!cancelled) setHuntingUnlocked(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.plugins()
+      .then((manifest) => {
+        if (!cancelled) setPlugins(manifest.plugins ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setPlugins([]);
       });
     return () => {
       cancelled = true;
@@ -287,6 +304,7 @@ export default function App() {
       ? `core v${server.version}`
       : "STANDBY"
     : "LINK DOWN";
+  const pluginNavigation = plugins.flatMap((plugin) => plugin.ui);
 
   async function createChat() {
     const agentId = agentIdFromSessionKey(sessionKey);
@@ -474,7 +492,12 @@ export default function App() {
           </div>
         );
       default:
-        return renderOverview();
+        {
+          const plugin = plugins.find((candidate) => candidate.ui.some((entry) => entry.route === view));
+          const contribution = plugin?.ui.find((entry) => entry.route === view);
+          if (plugin && contribution) return <PluginPage plugin={plugin} contribution={contribution} />;
+          return renderOverview();
+        }
     }
   }
 
@@ -551,6 +574,7 @@ export default function App() {
         onNavigate={requestNavigation}
         huntingUnlocked={huntingUnlocked === true}
         memoryUnlocked={memoryUnlocked === true}
+        pluginNavigation={pluginNavigation}
       />
       <main className="flex-1 overflow-y-auto p-4 sm:p-6">
         {/* mobile header + nav */}
@@ -594,6 +618,24 @@ export default function App() {
                 >
                   <Icon size={14} />
                   <span>{presentation.label}</span>
+                </button>
+              );
+            })}
+            {pluginNavigation.map((item) => {
+              const Icon = pluginIcon(item.icon);
+              return (
+                <button
+                  key={item.route}
+                  ref={view === item.route ? activeMobileNavItem : undefined}
+                  onClick={() => requestNavigation(item.route)}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                    view === item.route
+                      ? "border-hudborder-light bg-accent/10 text-accent-hover"
+                      : "border-hudborder text-gray-400"
+                  }`}
+                >
+                  <Icon size={14} />
+                  <span>{item.label}</span>
                 </button>
               );
             })}

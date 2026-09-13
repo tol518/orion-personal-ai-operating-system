@@ -7,6 +7,7 @@ import type {
   StoredWorkflow,
   WorkflowRun,
 } from "./workflow-types";
+import type { OrionPluginManifest } from "./plugin-types";
 
 const BASE = "/api";
 
@@ -600,6 +601,7 @@ async function postHuntingBlob(path: string, payload: unknown): Promise<CvPdfPre
 }
 
 export const api = {
+  plugins: () => getJson<OrionPluginManifest>("/plugins"),
   authStatus: () => getJson<{ ok: true; authenticated: boolean }>("/auth/status"),
   login: (password: string) =>
     postJson<{ ok: true; authenticated: boolean }>("/auth/login", { password }),

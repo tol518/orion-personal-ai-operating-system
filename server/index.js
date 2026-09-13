@@ -9,6 +9,7 @@ import { createHash, randomUUID } from "node:crypto";
 import express from "express";
 import dotenv from "dotenv";
 import { GatewayClient } from "./gateway.js";
+import { loadOrionPlugins, parseOrionPluginPaths } from "./orion-plugin-runtime.js";
 import {
   addUsageTotals,
   buildUsageAttribution,
@@ -508,6 +509,16 @@ app.use("/api", (req, res, next) => {
   if (!appAccess.verify(appAccessToken(req))) return fail(res, "Authentication required", 401);
   next();
 });
+
+const orionPlugins = await loadOrionPlugins({
+  paths: parseOrionPluginPaths(process.env.ORION_PLUGIN_PATHS),
+  app,
+  express,
+  dataRoot: path.join(__dirname, "data", "plugins"),
+  broadcast,
+});
+
+app.get("/api/plugins", (_req, res) => ok(res, orionPlugins.manifest()));
 
 app.get("/api/status", (_req, res) => ok(res, { status: gateway.status() }));
 
@@ -2478,7 +2489,7 @@ if (fs.existsSync(clientDist)) {
   app.get("*", (_req, res) => res.sendFile(path.join(clientDist, "index.html")));
 }
 
-app.listen(PORT, HOST, () => {
+const httpServer = app.listen(PORT, HOST, () => {
   console.log(`[jarvis-bff] listening on http://${HOST}:${PORT}  (gateway: ${GATEWAY_URL})`);
   // Owning the port proves this is the only live instance, so anything still marked in
   // flight belongs to a process that is gone. A launch that loses the port bind never
@@ -3649,12 +3660,18 @@ function appAccessToken(req) {
   return "";
 }
 
-function shutdown() {
+let shutdownStarted = false;
+
+async function shutdown() {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
   neuralEngine.stop();
   memories.stop();
   gateway.stop();
+  await orionPlugins.shutdown();
+  await new Promise((resolve) => httpServer.close(resolve));
   process.exit(0);
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
