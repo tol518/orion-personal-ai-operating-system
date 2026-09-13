@@ -41,6 +41,10 @@ public final class OrionStore {
     public private(set) var nodes: [DesktopNode] = []
     /// Remote-desktop availability per node. Empty when the Mini has no discovery configured.
     public private(set) var remoteAccess: [RemoteAccessNode] = []
+    /// The Mini's own entry. Present even when it is not a paired execution node.
+    public private(set) var miniRemoteAccess: RemoteAccessNode?
+    /// Machines configured on the Mini, independent of the gateway's node list.
+    public private(set) var remoteMachines: [RemoteMachine] = []
     public private(set) var remoteAccessUnavailable: String?
     public private(set) var launchingNodeId: String?
 
@@ -182,6 +186,8 @@ public final class OrionStore {
         sessions = []
         nodes = []
         remoteAccess = []
+        miniRemoteAccess = nil
+        remoteMachines = []
         messages = []
         selectedSessionKey = nil
         streamingReply = nil
@@ -224,10 +230,15 @@ public final class OrionStore {
     /// is a configuration state to explain rather than an error to alarm the user with.
     public func refreshRemoteAccess() async {
         do {
-            remoteAccess = try await client.remoteAccess()
+            let result = try await client.remoteAccess()
+            miniRemoteAccess = result.mini
+            remoteMachines = result.machines
+            remoteAccess = result.nodes
             remoteAccessUnavailable = nil
         } catch let error as OrionClientError {
             remoteAccess = []
+            miniRemoteAccess = nil
+            remoteMachines = []
             switch error {
             case .desktopAccessDisabled, .desktopAPIMissing:
                 remoteAccessUnavailable = "This Mini does not offer remote-desktop discovery yet."
@@ -238,6 +249,8 @@ public final class OrionStore {
             }
         } catch {
             remoteAccess = []
+            miniRemoteAccess = nil
+            remoteMachines = []
             remoteAccessUnavailable = error.localizedDescription
         }
     }
@@ -256,7 +269,7 @@ public final class OrionStore {
         defer { launchingNodeId = nil }
         do {
             let grant = try await client.openRemoteSession(nodeId: nodeId, kind: kind)
-            let url = try RemoteLauncher.url(for: grant)
+            let url = try Self.launchURL(for: grant)
             guard opener(url) else {
                 let app = RemoteLauncher.targetApplication(forScheme: grant.scheme) ?? "the viewer"
                 lastError = "macOS could not open \(app) for \(grant.host)."
@@ -443,6 +456,25 @@ public final class OrionStore {
                     ? "A run ended without completing."
                     : "An agent finished replying."
             )
+        }
+    }
+
+    /// Resolves a grant to something the window server can open.
+    ///
+    /// RDP needs a connection file rather than a URL, so one is written to the caches directory
+    /// and reused per host. It holds only the destination — the Windows App prompts for
+    /// credentials, which never pass through Orion.
+    static func launchURL(for grant: RemoteSessionGrant) throws -> URL {
+        switch try RemoteLauncher.target(for: grant) {
+        case .url(let url):
+            return url
+        case .connectionFile(let contents, let filename):
+            let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Orion", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let file = directory.appendingPathComponent(filename)
+            try contents.write(to: file, atomically: true, encoding: .utf8)
+            return file
         }
     }
 

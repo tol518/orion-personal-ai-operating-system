@@ -25,6 +25,20 @@ public struct RemoteAccessNode: Decodable, Sendable, Identifiable, Equatable {
     /// Present when no address could be resolved; says what to configure.
     public let hint: String?
 
+    public init(
+        nodeId: String,
+        host: String?,
+        hostSource: String,
+        services: [RemoteService],
+        hint: String?
+    ) {
+        self.nodeId = nodeId
+        self.host = host
+        self.hostSource = hostSource
+        self.services = services
+        self.hint = hint
+    }
+
     public var launchableServices: [RemoteService] {
         services.filter { $0.launchable && $0.reachable }
     }
@@ -49,7 +63,51 @@ public struct RemoteSessionGrant: Decodable, Sendable {
     }
 }
 
-struct RemoteAccessResponse: Decodable { let nodes: [RemoteAccessNode] }
+/// A machine offered by configuration rather than by the gateway's node list.
+///
+/// Reachability for remote desktop and OpenClaw node pairing are separate relationships: a PC can
+/// be perfectly reachable for RDP without ever being an execution node, and an outbound gateway
+/// channel gives no route back for a desktop session.
+public struct RemoteMachine: Decodable, Sendable, Identifiable, Equatable {
+    public var id: String { nodeId }
+    public let nodeId: String
+    public let label: String
+    public let platform: DesktopNode.Platform
+    public let host: String
+    public let hostSource: String
+    public let services: [RemoteService]
+
+    public var launchableServices: [RemoteService] {
+        services.filter { $0.launchable && $0.reachable }
+    }
+}
+
+struct RemoteAccessResponse: Decodable {
+    /// The Mini itself, reported separately because it need not be a paired execution node.
+    let mini: RemoteAccessNode?
+    let machines: [RemoteMachine]?
+    let nodes: [RemoteAccessNode]
+}
+
+extension RemoteAccessNode {
+    /// Node id the Mini reports itself under.
+    public static let miniNodeId = "orion-mini"
+
+    /// The same entry with a fallback address filled in.
+    ///
+    /// When the Mini cannot determine its own tailnet name, the address the user is already
+    /// connected through is known-good — it is how this request reached the Mini at all.
+    public func withFallbackHost(_ fallback: String?) -> RemoteAccessNode {
+        guard host == nil, let fallback, RemoteLauncher.isValidHost(fallback) else { return self }
+        return RemoteAccessNode(
+            nodeId: nodeId,
+            host: fallback,
+            hostSource: "connected-address",
+            services: services,
+            hint: nil
+        )
+    }
+}
 
 /// Turns a grant into a URL for the system to open.
 ///
@@ -103,6 +161,39 @@ public enum RemoteLauncher {
                 return "Could not build a connection address for that node."
             }
         }
+    }
+
+    /// How a validated grant should be handed to the system.
+    public enum LaunchTarget: Equatable {
+        /// Opened directly, as Screen Sharing accepts vnc://host:port.
+        case url(URL)
+        /// Written to a temporary file and opened, which is how the Windows App takes a
+        /// connection. Microsoft's documented rdp:// URI is a parameter list that Foundation
+        /// cannot construct — `=` and `:` are not valid in a URL authority — and a bare
+        /// rdp://host:port opens the app without connecting to anything.
+        case connectionFile(contents: String, filename: String)
+    }
+
+    /// Validates a grant and returns how to launch it.
+    public static func target(for grant: RemoteSessionGrant) throws -> LaunchTarget {
+        let scheme = grant.scheme.lowercased()
+        guard allowedSchemes[scheme] != nil else { throw LaunchError.unsupportedScheme(grant.scheme) }
+        guard (1...65_535).contains(grant.port) else { throw LaunchError.invalidPort(grant.port) }
+        guard isValidHost(grant.host) else { throw LaunchError.invalidHost(grant.host) }
+
+        if scheme == "rdp" {
+            // Only the destination. No credential is ever written to this file: the Windows App
+            // prompts, and the user's password stays between them and Windows.
+            let contents = [
+                "full address:s:\(grant.host):\(grant.port)",
+                "prompt for credentials:i:1",
+                "administrative session:i:0",
+                "screen mode id:i:2",
+            ].joined(separator: "\n") + "\n"
+            let safeName = grant.host.replacingOccurrences(of: ".", with: "-")
+            return .connectionFile(contents: contents, filename: "orion-\(safeName).rdp")
+        }
+        return .url(try url(for: grant))
     }
 
     /// Validates a grant and returns the URL to hand to the system.

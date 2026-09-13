@@ -1,13 +1,23 @@
 # Build, test, and bundle Orion.app without an Xcode project.
 #
 # `swift build` produces a bare executable. macOS needs a bundle for the menu bar, notifications,
-# and a Keychain identity, so `make app` assembles one around it.
+# a Keychain identity, and App Intents, so `make app` assembles one around it.
 
 CONFIG ?= release
 BUILD_DIR := $(shell swift build -c $(CONFIG) --show-bin-path 2>/dev/null)
 APP := build/Orion.app
+INTENTS_DIR := build/appintents
 
-.PHONY: all build test app run clean lint
+# App Intents metadata inputs. Xcode generates these as part of a normal build; with SwiftPM they
+# have to be produced explicitly, or Siri and Shortcuts never discover the intents.
+TOOLCHAIN := $(shell xcode-select -p)/Toolchains/XcodeDefault.xctoolchain
+PROCESSOR := $(TOOLCHAIN)/usr/bin/appintentsmetadataprocessor
+SDK := $(shell xcrun --show-sdk-path)
+XCODE_VERSION := $(shell xcodebuild -version 2>/dev/null | tail -1 | awk '{print $$3}')
+TARGET_TRIPLE := $(shell uname -m)-apple-macos14.0
+DEPLOYMENT_TARGET := 14.0
+
+.PHONY: all build test app appintents run clean
 
 all: app
 
@@ -17,18 +27,60 @@ build:
 test:
 	swift test
 
+# Extract App Intents metadata into the bundle.
+#
+# Two steps, because SwiftPM does neither: the compiler emits const values describing which types
+# conform to AppIntent, and the processor turns those into Metadata.appintents. Only Intents.swift
+# is compiled here — main.swift has top-level code, which -parse-as-library rejects.
+#
+# A failure is a warning rather than an error: the app is perfectly usable without Siri, and a
+# machine with Command Line Tools but no full Xcode cannot run the processor.
+appintents: build
+	@mkdir -p $(INTENTS_DIR) $(APP)/Contents/Resources
+	@printf '%s' '["AppEntity","AppEnum","AppIntent","AppShortcutsProvider","DynamicOptionsProvider","EntityIdentifierConvertible","EntityQuery","EntityStringConvertible","IndexedEntity","PersistentlyIdentifiable","TransientAppEntity","URLRepresentableEntity","URLRepresentableEnum","URLRepresentableIntent","AssistantIntent","AssistantEntity","AssistantEnum"]' > $(INTENTS_DIR)/protocols.json
+	@if [ ! -x "$(PROCESSOR)" ]; then \
+		echo "warning: appintentsmetadataprocessor not found — Siri and Shortcuts will not see Orion's intents."; \
+		echo "         Install the full Xcode and run: sudo xcode-select -s /Applications/Xcode.app"; \
+	else \
+		swiftc -c -wmo -parse-as-library -module-name OrionApp \
+			-target $(TARGET_TRIPLE) -sdk "$(SDK)" -I "$(BUILD_DIR)/Modules" \
+			-emit-const-values-path $(INTENTS_DIR)/OrionApp.swiftconstvalues \
+			-Xfrontend -const-gather-protocols-file -Xfrontend $(INTENTS_DIR)/protocols.json \
+			-o $(INTENTS_DIR)/OrionApp.o \
+			Sources/OrionApp/Intents.swift && \
+		ls Sources/OrionApp/*.swift > $(INTENTS_DIR)/sources.txt && \
+		echo "$(PWD)/$(INTENTS_DIR)/OrionApp.swiftconstvalues" > $(INTENTS_DIR)/constvals.txt && \
+		"$(PROCESSOR)" \
+			--output $(APP)/Contents/Resources \
+			--toolchain-dir "$(TOOLCHAIN)" \
+			--module-name OrionApp \
+			--sdk-root "$(SDK)" \
+			--xcode-version "$(XCODE_VERSION)" \
+			--platform-family macOS \
+			--deployment-target $(DEPLOYMENT_TARGET) \
+			--target-triple $(TARGET_TRIPLE) \
+			--source-file-list $(INTENTS_DIR)/sources.txt \
+			--swift-const-vals-list $(INTENTS_DIR)/constvals.txt \
+			--force > /dev/null 2>&1 && \
+		echo "App Intents metadata written to $(APP)/Contents/Resources/Metadata.appintents" || \
+		echo "warning: App Intents metadata extraction failed — Siri will not see Orion's intents."; \
+	fi
+
 # Assemble the .app around the built executable.
 #
-# The ad-hoc signature at the end is what lets the app hold a stable Keychain identity and ask for
-# notification permission. It is not a distribution signature: for that, re-sign with a Developer
-# ID and notarize. Re-signing with a different identity makes the existing Keychain item
-# unreadable, so the app will ask to pair again.
+# The ad-hoc signature at the end is what lets the app hold a stable Keychain identity, ask for
+# notification permission, and register its intents. It is not a distribution signature: for that,
+# re-sign with a Developer ID and notarize. Re-signing with a different identity makes the existing
+# Keychain item unreadable, so the app will ask to pair again.
+#
+# Signing runs last on purpose — the signature has to cover Metadata.appintents.
 app: build
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
 	cp $(BUILD_DIR)/OrionApp $(APP)/Contents/MacOS/OrionApp
 	printf 'APPL????' > $(APP)/Contents/PkgInfo
+	$(MAKE) appintents
 	codesign --force --deep --sign - $(APP)
 	@echo "Built $(APP)"
 

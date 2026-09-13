@@ -43,6 +43,8 @@ export const REMOTE_SERVICES = [
 const DEFAULT_PROBE_TIMEOUT_MS = 1_200;
 const DEFAULT_CACHE_TTL_MS = 15_000;
 const MAX_AUDIT_EVENTS = 200;
+/** Node id standing for the Mini itself, which may not appear in the gateway's node list. */
+export const SELF_NODE_ID = "orion-mini";
 const TAILSCALE_BINARIES = [
   "/usr/local/bin/tailscale",
   "/opt/homebrew/bin/tailscale",
@@ -51,6 +53,34 @@ const TAILSCALE_BINARIES = [
 // A tailnet DNS name, an IP, or a plain hostname. Anything else is not probed: the address ends
 // up in a URL the client opens, so it must not be able to carry a path, port, or credentials.
 const HOST_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
+
+const PLATFORMS = new Set(["macos", "windows", "linux"]);
+
+/**
+ * Parses `Label|host|platform` entries separated by commas.
+ *
+ * Machines configured this way are listed whether or not the gateway knows about them. A machine
+ * can be perfectly reachable for remote desktop while not being an OpenClaw execution node —
+ * those are different relationships, and a Windows PC that reaches the gateway over its own
+ * outbound channel has no route back for RDP unless it is on the private network too.
+ */
+export function parseMachines(raw) {
+  const machines = [];
+  const seen = new Set();
+  for (const entry of String(raw ?? "").split(",")) {
+    const parts = entry.split("|").map((value) => (value ?? "").trim());
+    if (parts.length !== 3) continue;
+    const [label, host, platform] = parts;
+    if (!label || label.length > 40) continue;
+    if (!HOST_PATTERN.test(host)) continue;
+    if (!PLATFORMS.has(platform)) continue;
+    const id = `machine:${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`;
+    if (!id.slice(8) || seen.has(id)) continue;
+    seen.add(id);
+    machines.push({ nodeId: id, label, host, platform });
+  }
+  return machines;
+}
 
 export class RemoteAccessDirectory {
   /**
@@ -61,6 +91,7 @@ export class RemoteAccessDirectory {
    */
   constructor({
     hostOverrides = "",
+    machines = "",
     probe,
     listPeers,
     probeTimeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
@@ -68,6 +99,7 @@ export class RemoteAccessDirectory {
     now = () => Date.now(),
   } = {}) {
     this.overrides = parseHostOverrides(hostOverrides);
+    this.machines = parseMachines(machines);
     this.probeReachable = probe ?? probeTcpPort;
     this.listPeers = listPeers ?? listTailnetPeers;
     this.probeTimeoutMs = probeTimeoutMs;
@@ -123,6 +155,86 @@ export class RemoteAccessDirectory {
       hostSource: this.overrides.has(node.id ?? node.nodeId) ? "configured" : "tailnet",
       services,
     };
+  }
+
+  /**
+   * Describes the Mini itself.
+   *
+   * The Mini runs the gateway, and it is not necessarily registered as an OpenClaw execution
+   * node — on a single-machine deployment `node.list` is empty. It is also the machine the user
+   * most wants to reach, so it gets a first-class entry instead of waiting to appear in a list
+   * it may never join.
+   *
+   * Reachability is probed on loopback, which answers "is Screen Sharing running here". The
+   * address handed back is the tailnet name, because that is what the client has to dial; when
+   * the Tailscale CLI is unavailable the client falls back to the address it is already
+   * connected through.
+   */
+  async describeSelf() {
+    const override = this.overrides.get(SELF_NODE_ID);
+    let host = override ?? null;
+    let hostSource = override ? "configured" : "unresolved";
+    if (!host) {
+      const peers = await this.safePeers();
+      const own = peers.find((peer) => peer.isSelf);
+      if (own?.dnsName && HOST_PATTERN.test(own.dnsName)) {
+        host = own.dnsName;
+        hostSource = "tailnet";
+      }
+    }
+    const services = await Promise.all(
+      REMOTE_SERVICES.filter((service) => service.platforms.includes("macos")).map(
+        async (service) => ({
+          kind: service.kind,
+          label: service.label,
+          port: service.port,
+          scheme: service.scheme,
+          launchable: service.scheme !== null,
+          // Loopback: this is the host running the probe.
+          reachable: await this.cachedProbe("127.0.0.1", service.port),
+        }),
+      ),
+    );
+    return {
+      nodeId: SELF_NODE_ID,
+      host,
+      hostSource,
+      services,
+      ...(host
+        ? {}
+        : {
+            hint: "Could not determine this Mini's own network name. The app will use the address you connected with.",
+          }),
+    };
+  }
+
+  /** Machines listed by configuration, each probed for the services its platform supports. */
+  async describeMachines() {
+    return Promise.all(
+      this.machines.map(async (machine) => ({
+        nodeId: machine.nodeId,
+        label: machine.label,
+        platform: machine.platform,
+        host: machine.host,
+        hostSource: "configured",
+        services: await Promise.all(
+          REMOTE_SERVICES.filter((service) => service.platforms.includes(machine.platform)).map(
+            async (service) => ({
+              kind: service.kind,
+              label: service.label,
+              port: service.port,
+              scheme: service.scheme,
+              launchable: service.scheme !== null,
+              reachable: await this.cachedProbe(machine.host, service.port),
+            }),
+          ),
+        ),
+      })),
+    );
+  }
+
+  findMachine(nodeId) {
+    return this.machines.find((machine) => machine.nodeId === nodeId) ?? null;
   }
 
   resolveHost(node, peers) {
@@ -224,10 +336,15 @@ export async function listTailnetPeers() {
   const { stdout } = await execFileAsync(binary, ["status", "--json"], { timeout: 5_000 });
   const status = JSON.parse(stdout);
   const entries = [status.Self, ...Object.values(status.Peer ?? {})].filter(Boolean);
+  const selfName = String(status.Self?.DNSName ?? "").replace(/\.$/, "");
   return entries
     .map((peer) => {
       const dnsName = String(peer.DNSName ?? "").replace(/\.$/, "");
-      return { shortName: dnsName.split(".")[0] ?? "", dnsName };
+      return {
+        shortName: dnsName.split(".")[0] ?? "",
+        dnsName,
+        isSelf: dnsName !== "" && dnsName === selfName,
+      };
     })
     .filter((peer) => peer.dnsName);
 }

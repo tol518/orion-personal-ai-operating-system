@@ -10,7 +10,7 @@ struct NodesView: View {
 
     var body: some View {
         Group {
-            if store.nodes.isEmpty {
+            if store.nodes.isEmpty && store.miniRemoteAccess == nil && store.remoteMachines.isEmpty {
                 ContentUnavailableView(
                     "No nodes",
                     systemImage: "desktopcomputer.trianglebadge.exclamationmark",
@@ -21,6 +21,33 @@ struct NodesView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
+                        // The Mini first: it hosts the runtime, and it is the machine most likely
+                        // to be wanted as a desktop. It is listed whether or not the gateway
+                        // also registers it as an execution node.
+                        if let mini = store.miniRemoteAccess {
+                            MiniCard(
+                                access: mini,
+                                isLaunching: store.launchingNodeId == mini.nodeId,
+                                onConnect: { kind in
+                                    Task { await store.openRemoteSession(nodeId: mini.nodeId, kind: kind) }
+                                }
+                            )
+                        }
+                        ForEach(store.remoteMachines) { machine in
+                            MachineCard(
+                                machine: machine,
+                                isLaunching: store.launchingNodeId == machine.nodeId,
+                                onConnect: { kind in
+                                    Task { await store.openRemoteSession(nodeId: machine.nodeId, kind: kind) }
+                                }
+                            )
+                        }
+                        if !store.nodes.isEmpty {
+                            Text("Paired execution nodes")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 4)
+                        }
                         ForEach(store.nodes) { node in
                             NodeCard(
                                 node: node,
@@ -54,6 +81,158 @@ struct NodesView: View {
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
+        }
+    }
+}
+
+/// The Mini's own card. Separate from NodeCard because the Mini is not a paired node: it has no
+/// gateway capability list, and it is the runtime host rather than an execution target.
+struct MiniCard: View {
+    let access: RemoteAccessNode
+    let isLaunching: Bool
+    let onConnect: (String) -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "macmini.fill")
+                .font(.title2)
+                .foregroundStyle(.tint)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text("Mac mini").font(.headline)
+                    Text("runtime host")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.18), in: Capsule())
+                        .foregroundStyle(Color.accentColor)
+                }
+                if let host = access.host {
+                    Text(host)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                }
+                Text("Orion's agents, sessions, and memory all live here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if access.launchableServices.isEmpty {
+                    Text(access.host == nil
+                         ? (access.hint ?? "No address for this Mini.")
+                         : "Screen Sharing is off. Turn it on in System Settings → General → Sharing on the Mini.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    HStack(spacing: 8) {
+                        ForEach(access.launchableServices) { service in
+                            Button {
+                                onConnect(service.kind)
+                            } label: {
+                                if isLaunching {
+                                    HStack(spacing: 6) {
+                                        ProgressView().controlSize(.small)
+                                        Text("Opening…")
+                                    }
+                                } else {
+                                    Label("Open desktop", systemImage: "display")
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isLaunching)
+                            .help("Opens \(service.label) on \(access.host ?? "the Mini")")
+                        }
+                        Text("via Screen Sharing")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+/// A machine listed by configuration on the Mini. It has no gateway status, because it need not
+/// be an execution node at all — being reachable for remote desktop is a separate relationship.
+struct MachineCard: View {
+    let machine: RemoteMachine
+    let isLaunching: Bool
+    let onConnect: (String) -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol)
+                .font(.title2)
+                .foregroundStyle(.tint)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(machine.label).font(.headline)
+                Text(machine.host)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .textSelection(.enabled)
+
+                if machine.launchableServices.isEmpty {
+                    Text(unavailableHint)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    HStack(spacing: 8) {
+                        ForEach(machine.launchableServices) { service in
+                            Button {
+                                onConnect(service.kind)
+                            } label: {
+                                if isLaunching {
+                                    HStack(spacing: 6) {
+                                        ProgressView().controlSize(.small)
+                                        Text("Opening…")
+                                    }
+                                } else {
+                                    Label("Open desktop", systemImage: "display")
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isLaunching)
+                            .help("Opens \(service.label) on \(machine.host)")
+                        }
+                        if let first = machine.launchableServices.first {
+                            Text("via \(first.label)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var symbol: String {
+        switch machine.platform {
+        case .macos: return "macmini"
+        case .windows: return "pc"
+        case .linux: return "server.rack"
+        case .unknown: return "questionmark.square.dashed"
+        }
+    }
+
+    /// Names the setting to change rather than only reporting absence.
+    private var unavailableHint: String {
+        switch machine.platform {
+        case .windows:
+            return "Remote Desktop is not answering. Enable Settings → System → Remote Desktop on this PC (needs Windows Pro), and check it is awake."
+        case .macos:
+            return "Screen Sharing is off. Turn it on in System Settings → General → Sharing."
+        default:
+            return "No remote-desktop service is answering on this machine."
         }
     }
 }
