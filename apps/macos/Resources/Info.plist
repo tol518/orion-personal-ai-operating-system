@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Orion</string>
+	<key>CFBundleDisplayName</key>
+	<string>Orion</string>
+	<key>CFBundleExecutable</key>
+	<string>OrionApp</string>
+	<key>CFBundleIdentifier</key>
+	<string>app.orion.desktop</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Orion personal AI operating system</string>
+	<!-- The Mini is reached over Tailscale by MagicDNS name, e.g. host.tailnet.ts.net.
+	     NSAllowsLocalNetworking is not enough for that: it covers .local, loopback, and
+	     link-local only, so ATS treats a .ts.net name as a public host and demands HTTPS.
+	     The exception below is scoped to ts.net, and nothing else. A tailnet address is not
+	     routable from the public internet and the traffic to it is already WireGuard-encrypted
+	     end to end, so HTTP over it is not a cleartext-on-the-wire exposure.
+	     An https:// address is still honoured and preferred: run `tailscale cert` on the Mini
+	     to get a real certificate for its MagicDNS name and this exception stops mattering. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>ts.net</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+</dict>
+</plist>

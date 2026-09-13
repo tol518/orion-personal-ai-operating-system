@@ -10,6 +10,9 @@ import express from "express";
 import dotenv from "dotenv";
 import { GatewayClient } from "./gateway.js";
 import { loadOrionPlugins, parseOrionPluginPaths } from "./orion-plugin-runtime.js";
+import { DesktopAccess } from "./desktop-access.js";
+import { createDesktopApi, desktopEventFrame } from "./desktop-api.js";
+import { RemoteAccessDirectory } from "./remote-access.js";
 import {
   addUsageTotals,
   buildUsageAttribution,
@@ -279,6 +282,19 @@ const interviewPrep = new InterviewPrepService({ gateway, dir: INTERVIEW_PREP_DI
 const huntingAccess = new HuntingAccess({ password: process.env.HUNTING_ACCESS_PASSWORD });
 const memoryAccess = new HuntingAccess({ password: process.env.MEMORY_ACCESS_PASSWORD });
 const appAccess = new HuntingAccess({ password: process.env.JARVIS_ACCESS_PASSWORD });
+// Native macOS client boundary. Separate from appAccess because the browser gate is bound to a
+// cookie and a same-origin check that Orion.app cannot satisfy; see docs/architecture/desktop-api-contract.md.
+// Unset ORION_DESKTOP_PAIRING_SECRET leaves the whole desktop surface closed.
+const desktopAccess = new DesktopAccess({
+  pairingSecret: process.env.ORION_DESKTOP_PAIRING_SECRET,
+  allowedClients: process.env.ORION_DESKTOP_ALLOWED_CLIENTS,
+});
+// Reports which native remote-desktop service is reachable per node. Discovery and audit only —
+// no framebuffer and no input injection ever pass through the BFF.
+const remoteAccess = new RemoteAccessDirectory({
+  hostOverrides: process.env.ORION_REMOTE_ACCESS_HOSTS,
+  machines: process.env.ORION_REMOTE_ACCESS_MACHINES,
+});
 // Workflow learning: Screenpipe is the observation layer, this store is the executable spec and
 // run log, and the Obsidian memory below holds the readable recipe.
 const screenpipe = new ScreenpipeClient();
@@ -363,6 +379,9 @@ memories.start().then(async () => {
 
 // ---- Server-Sent Events fan-out -------------------------------------------
 const sseClients = new Set();
+// Native clients read the same events through the same broadcast, narrowed to DESKTOP_EVENTS.
+// Keeping one fan-out means a new browser event cannot silently diverge from the desktop stream.
+const desktopSseClients = new Set();
 const sessionAttachmentGrants = new Map();
 
 function broadcast(event, data) {
@@ -374,6 +393,22 @@ function broadcast(event, data) {
       sseClients.delete(res);
     }
   }
+  // The desktop frame is built separately: out-of-scope events are dropped and gateway status is
+  // redacted, so a native client never receives the browser's view of the runtime.
+  const desktopFrame = desktopEventFrame(event, data);
+  if (!desktopFrame) return;
+  for (const res of desktopSseClients) {
+    try {
+      res.write(desktopFrame);
+    } catch {
+      desktopSseClients.delete(res);
+    }
+  }
+}
+
+function subscribeDesktopEvents(res) {
+  desktopSseClients.add(res);
+  return () => desktopSseClients.delete(res);
 }
 
 // Forward selected gateway events straight to the browser.
@@ -504,6 +539,24 @@ app.post("/api/auth/logout", (req, res) => {
   res.clearCookie(APP_SESSION_COOKIE, { path: "/" });
   ok(res, { authenticated: false });
 });
+
+// Native macOS client surface. Mounted ahead of the browser cookie gate below on purpose:
+// Express matches "/api" as a prefix, so mounting it after would apply the cookie and
+// same-origin checks to a client that has no browser origin. This router runs its own bearer
+// authorization instead (server/desktop-api.js).
+app.use(
+  "/api/v1/desktop",
+  createDesktopApi({
+    gateway,
+    access: desktopAccess,
+    submitChatTurn,
+    chatHistory: readChatHistory,
+    modelOptionsFromConfig,
+    subscribe: subscribeDesktopEvents,
+    remoteAccess,
+    decorateNodes: (payload) => windowsScreen.decorateNodeList(payload),
+  }),
+);
 
 app.use("/api", (req, res, next) => {
   if (!appAccess.verify(appAccessToken(req))) return fail(res, "Authentication required", 401);
@@ -949,18 +1002,20 @@ app.put("/api/sessions/:key/model", async (req, res) => {
   }
 });
 
+// Shared so the native client reads history through the same bounded envelope as the browser.
+function readChatHistory(sessionKey) {
+  return gateway.request("chat.history", {
+    sessionKey,
+    limit: 50,
+    maxChars: CHAT_HISTORY_MAX_CHARS,
+  });
+}
+
 app.get("/api/history", async (req, res) => {
   const sessionKey = req.query.sessionKey;
   if (typeof sessionKey !== "string") return fail(res, "sessionKey required", 400);
   try {
-    ok(
-      res,
-      await gateway.request("chat.history", {
-        sessionKey,
-        limit: 50,
-        maxChars: CHAT_HISTORY_MAX_CHARS,
-      }),
-    );
+    ok(res, await readChatHistory(sessionKey));
   } catch (err) {
     fail(res, err);
   }
@@ -2332,6 +2387,59 @@ async function recordRunInMemory(workflowId, run) {
   await syncWorkflowMemory(workflow).catch(() => undefined);
 }
 
+// Shared chat submission path. Both the browser (/api/chat) and the native client
+// (/api/v1/desktop/chat) call this, so memory retrieval, execution policy, attachment grants,
+// and the gateway envelope stay in one place and cannot drift between the two surfaces.
+async function submitChatTurn({ sessionKey, message, agentId, attachmentIds = [] }) {
+  const userMessage = String(message ?? "");
+  const target = executionTargets.get(sessionKey);
+  const devices = await getExecutionDevices();
+  await patchSessionExecutionTarget(sessionKey, agentId, target, devices);
+  const relevantLessons = memories.retrieve(userMessage, 2, "shared_lesson");
+  const relevantMemories = [
+    ...relevantLessons,
+    ...memories.retrieve(userMessage, 4, "general"),
+  ];
+  const activeAgentId = agentId || /^agent:([^:]+):/.exec(sessionKey)?.[1] || "main";
+  // Retrieval is agent-agnostic, so the scope filter runs here too: a candidate list the agent
+  // may not read would otherwise leak titles through memoryCandidates and skew activation.
+  const readableRelevantMemories = relevantMemories.filter((memory) => canAgentReadMemory(memory, activeAgentId));
+  const memoryContext = contextForAgent(memories.list(), activeAgentId, relevantMemories);
+  const extractionCatalog = activeAgentId === BLACK_NOIR_AGENT_ID ? blackNoirExtractorCatalog() : null;
+  const userAttachments = attachmentStore.list(attachmentIds);
+  const memoryAttachments = memoryContext.flatMap((memory) =>
+    attachmentStore.forMemory(memory.id).map((attachment) => ({ ...attachment, memoryId: memory.id })),
+  );
+  const gatewayAttachments = attachmentStore.gatewayPayloads([
+    ...userAttachments.map(({ id }) => id),
+    ...memoryAttachments.map(({ id }) => id),
+  ]);
+  sessionAttachmentGrants.set(sessionKey, new Set([
+    ...userAttachments.map(({ id }) => id),
+    ...memoryAttachments.map(({ id }) => id),
+  ]));
+  neuralEngine.recordRetrieval(readableRelevantMemories.map(({ id }) => id));
+  const ack = await gateway.request("chat.send", {
+    sessionKey,
+    ...(agentId ? { agentId } : {}),
+    message: buildMemoryAwareMessage(
+      userMessage,
+      memoryContext,
+      buildExecutionPolicy(target, devices),
+      { user: userAttachments, memory: memoryAttachments },
+      activeAgentId,
+      extractionCatalog,
+    ),
+    ...(gatewayAttachments.length ? { attachments: gatewayAttachments } : {}),
+    deliver: false,
+    idempotencyKey: randomUUID(),
+  });
+  return {
+    ack,
+    memoryCandidates: readableRelevantMemories.map(({ id, title }) => ({ id, title })),
+  };
+}
+
 app.post("/api/chat", async (req, res) => {
   const { sessionKey, message, agentId, attachmentIds = [] } = req.body ?? {};
   const userMessage = String(message ?? "");
@@ -2339,52 +2447,7 @@ app.post("/api/chat", async (req, res) => {
     return fail(res, "sessionKey and a message or attachment are required", 400);
   }
   try {
-    const target = executionTargets.get(sessionKey);
-    const devices = await getExecutionDevices();
-    await patchSessionExecutionTarget(sessionKey, agentId, target, devices);
-    const relevantLessons = memories.retrieve(userMessage, 2, "shared_lesson");
-    const relevantMemories = [
-      ...relevantLessons,
-      ...memories.retrieve(userMessage, 4, "general"),
-    ];
-    const activeAgentId = agentId || /^agent:([^:]+):/.exec(sessionKey)?.[1] || "main";
-    // Retrieval is agent-agnostic, so the scope filter runs here too: a candidate list the agent
-    // may not read would otherwise leak titles through memoryCandidates and skew activation.
-    const readableRelevantMemories = relevantMemories.filter((memory) => canAgentReadMemory(memory, activeAgentId));
-    const memoryContext = contextForAgent(memories.list(), activeAgentId, relevantMemories);
-    const extractionCatalog = activeAgentId === BLACK_NOIR_AGENT_ID ? blackNoirExtractorCatalog() : null;
-    const userAttachments = attachmentStore.list(attachmentIds);
-    const memoryAttachments = memoryContext.flatMap((memory) =>
-      attachmentStore.forMemory(memory.id).map((attachment) => ({ ...attachment, memoryId: memory.id })),
-    );
-    const gatewayAttachments = attachmentStore.gatewayPayloads([
-      ...userAttachments.map(({ id }) => id),
-      ...memoryAttachments.map(({ id }) => id),
-    ]);
-    sessionAttachmentGrants.set(sessionKey, new Set([
-      ...userAttachments.map(({ id }) => id),
-      ...memoryAttachments.map(({ id }) => id),
-    ]));
-    neuralEngine.recordRetrieval(readableRelevantMemories.map(({ id }) => id));
-    const ack = await gateway.request("chat.send", {
-      sessionKey,
-      ...(agentId ? { agentId } : {}),
-      message: buildMemoryAwareMessage(
-        userMessage,
-        memoryContext,
-        buildExecutionPolicy(target, devices),
-        { user: userAttachments, memory: memoryAttachments },
-        activeAgentId,
-        extractionCatalog,
-      ),
-      ...(gatewayAttachments.length ? { attachments: gatewayAttachments } : {}),
-      deliver: false,
-      idempotencyKey: randomUUID(),
-    });
-    ok(res, {
-      ack,
-      memoryCandidates: readableRelevantMemories.map(({ id, title }) => ({ id, title })),
-    });
+    ok(res, await submitChatTurn({ sessionKey, message, agentId, attachmentIds }));
   } catch (err) {
     fail(res, err);
   }

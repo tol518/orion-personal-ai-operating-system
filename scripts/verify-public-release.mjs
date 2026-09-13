@@ -5,7 +5,8 @@ const root = path.resolve(process.argv[2] ?? path.join(import.meta.dirname, ".."
 const denylistPath = process.env.JARVIS_PUBLIC_DENYLIST_FILE;
 const findings = [];
 
-const excludedDirectories = new Set([".git", "node_modules"]);
+// .build is SwiftPM's dependency and build cache, the Swift equivalent of node_modules.
+const excludedDirectories = new Set([".git", "node_modules", ".build"]);
 const forbiddenNames = [
   /^\.env$/,
   /^\.env\.(?!example$)/,
@@ -15,7 +16,7 @@ const forbiddenNames = [
   /\.tsbuildinfo$/,
   /^\.DS_Store$/,
 ];
-const forbiddenDirectories = ["client/dist", "server/data"];
+const forbiddenDirectories = ["client/dist", "server/data", "apps/macos/build"];
 const sensitivePatterns = [
   { label: "private key", pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/ },
   { label: "personal macOS path", pattern: /\/Users\/(?!example(?:\/|$))[^/\s]+\// },

@@ -1,3 +1,5 @@
+<img width="1254" height="1254" alt="ChatGPT Image Aug 20, 2026 at 12_02_11 PM" src="https://github.com/user-attachments/assets/99730e27-5322-4b85-bb48-316ee2c2058f" />
+
 # ORION
 
 [![CI](https://github.com/tol518/orion-personal-ai-operating-system/actions/workflows/ci.yml/badge.svg)](https://github.com/tol518/orion-personal-ai-operating-system/actions/workflows/ci.yml)
