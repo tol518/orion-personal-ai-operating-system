@@ -112,7 +112,6 @@ struct OrionShortcuts: AppShortcutsProvider {
                 "Is \(.applicationName) connected",
                 "How is \(.applicationName)",
                 "\(.applicationName) status",
-                "What is \(.applicationName) doing",
             ],
             shortTitle: "Orion Status",
             systemImageName: "gauge.with.dots.needle.33percent"
@@ -120,20 +119,22 @@ struct OrionShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: SendToOrionIntent(),
             phrases: [
-                "Send a message to \(.applicationName)",
                 "Ask \(.applicationName)",
                 "Tell \(.applicationName)",
+                "Message \(.applicationName)",
             ],
             shortTitle: "Message Orion",
             systemImageName: "bubble.left.and.bubble.right"
         )
         AppShortcut(
             intent: CheckOrionUsageIntent(),
+            // Short phrases first. Siri's app-shortcut matching is unreliable with long
+            // sentences — a full question falls through to "hasn't added support for that".
             phrases: [
-                "Check \(.applicationName) usage",
                 "\(.applicationName) usage",
-                "How much have I spent on \(.applicationName)",
-                "What is my \(.applicationName) spend",
+                "Check \(.applicationName) usage",
+                "\(.applicationName) spend",
+                "\(.applicationName) tokens",
             ],
             shortTitle: "Orion Usage",
             systemImageName: "chart.bar"
@@ -141,9 +142,10 @@ struct OrionShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: CheckCodexAllowanceIntent(),
             phrases: [
-                "How much Codex do I have left in \(.applicationName)",
+                "\(.applicationName) Codex",
                 "\(.applicationName) Codex allowance",
-                "Check \(.applicationName) Codex limit",
+                "Check \(.applicationName) Codex",
+                "\(.applicationName) Codex limit",
             ],
             shortTitle: "Codex Allowance",
             systemImageName: "gauge.with.needle"
