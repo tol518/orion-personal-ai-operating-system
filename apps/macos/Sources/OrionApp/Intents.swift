@@ -74,10 +74,17 @@ struct OrionShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: CheckOrionStatusIntent(),
+            // Several ways of asking the same thing. Without the bare "Check Orion" form, that
+            // phrase falls through to the open-the-app shortcut, which is not what someone
+            // asking about status wants.
             phrases: [
+                "Check \(.applicationName)",
                 "Check \(.applicationName) status",
+                "Check on \(.applicationName)",
                 "Is \(.applicationName) connected",
+                "How is \(.applicationName)",
                 "\(.applicationName) status",
+                "What is \(.applicationName) doing",
             ],
             shortTitle: "Orion Status",
             systemImageName: "gauge.with.dots.needle.33percent"
