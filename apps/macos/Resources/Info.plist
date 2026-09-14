@@ -8,6 +8,8 @@
 	<string>Orion</string>
 	<key>CFBundleExecutable</key>
 	<string>OrionApp</string>
+	<key>CFBundleIconFile</key>
+	<string>Orion</string>
 	<key>CFBundleIdentifier</key>
 	<string>app.orion.desktop</string>
 	<key>CFBundleInfoDictionaryVersion</key>

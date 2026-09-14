@@ -15,9 +15,15 @@ final class BaseURLTests: XCTestCase {
     }
 
     func testHonoursAnExplicitHttpsScheme() throws {
-        // A user who has set up TLS on the Mini should not be downgraded.
+        // A user who has set up TLS on the Mini should not be downgraded, and should land on 443
+        // rather than the BFF's own port — behind Tailscale Serve, 4820 is not listening.
         let url = try OrionClient.resolveBaseURL(from: "https://mini.example-tailnet.ts.net")
-        XCTAssertEqual(url.absoluteString, "https://mini.example-tailnet.ts.net:4820")
+        XCTAssertEqual(url.absoluteString, "https://mini.example-tailnet.ts.net:443")
+    }
+
+    func testAnExplicitPortWinsOverTheSchemeDefault() throws {
+        let url = try OrionClient.resolveBaseURL(from: "https://mini.example-tailnet.ts.net:8443")
+        XCTAssertEqual(url.absoluteString, "https://mini.example-tailnet.ts.net:8443")
     }
 
     func testStripsPathAndQuery() throws {

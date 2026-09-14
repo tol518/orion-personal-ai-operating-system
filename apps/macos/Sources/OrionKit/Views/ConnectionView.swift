@@ -53,7 +53,7 @@ struct ConnectionView: View {
                 Button("Use") { Task { await applyHost() } }
                     .disabled(host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)
             }
-            Text("A Tailscale MagicDNS name is preferred over an IP address. Port 4820 is assumed if you leave it off.")
+            Text("A Tailscale MagicDNS name is preferred over an IP address. Port 4820 is assumed, or 443 if you start the address with https://.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
