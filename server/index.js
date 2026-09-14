@@ -2560,8 +2560,28 @@ if (fs.existsSync(clientDist)) {
   app.get("*", (_req, res) => res.sendFile(path.join(clientDist, "index.html")));
 }
 
+/**
+ * Warns when the server is reachable from every network interface.
+ *
+ * Binding to 0.0.0.0 puts this port on the office LAN, the café Wi-Fi, and anything else the
+ * machine is attached to — not only the private network it was meant for. That is survivable
+ * while the authentication boundary above is intact, and an open door the moment it is not.
+ * A deployment was found in exactly that state, so this says so at every startup rather than
+ * leaving it to be discovered.
+ */
+function warnIfBoundToEveryInterface(host) {
+  if (!["0.0.0.0", "::", ""].includes(String(host ?? "").trim())) return;
+  console.warn(
+    `[jarvis-bff] HOST=${host} — this API is reachable from every network interface, not just ` +
+      "your private network. Bind to 127.0.0.1, or to this machine's private-network address, " +
+      "unless you have a reason not to.",
+  );
+}
+
+// The handle is kept so shutdown can close the HTTP server cleanly alongside the plugin runtime.
 const httpServer = app.listen(PORT, HOST, () => {
   console.log(`[jarvis-bff] listening on http://${HOST}:${PORT}  (gateway: ${GATEWAY_URL})`);
+  warnIfBoundToEveryInterface(HOST);
   // Owning the port proves this is the only live instance, so anything still marked in
   // flight belongs to a process that is gone. A launch that loses the port bind never
   // reaches this point and therefore cannot disturb the instance that won it.
