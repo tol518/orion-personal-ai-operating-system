@@ -144,6 +144,113 @@ public struct OrionIntentService: Sendable {
         return "Sent to \(session.title)."
     }
 
+    /// Sends a turn and waits briefly for the reply, so a spoken question gets a spoken answer.
+    ///
+    /// The wait is deliberately short. Agent runs regularly take minutes, and a Siri request that
+    /// hangs that long is worse than useless — the system kills it and the user learns nothing.
+    /// So a quick answer is spoken, and a slow one is left running on the Mini with an honest
+    /// "still working" rather than a fabricated result.
+    public func sendAwaitingReply(
+        message: String,
+        toAgentNamed agentName: String? = nil,
+        timeout: TimeInterval = 10
+    ) async throws -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw IntentError.failed("There was no message to send.") }
+        let client = try await connectedClient()
+        let target = try await resolveTarget(for: agentName, using: client)
+
+        // Subscribe before sending, or a fast reply is missed entirely.
+        let stream = try await client.makeEventStream()
+        let collector = Task { () -> String? in
+            var accumulated = ""
+            for try await event in stream.events() {
+                guard event.name == "chat", let chat = event.decode(ChatEvent.self) else { continue }
+                guard chat.sessionKey == nil || chat.sessionKey == target.sessionKey else { continue }
+                if chat.isDelta {
+                    accumulated += chat.deltaText ?? ""
+                } else if chat.isTerminal {
+                    return TranscriptFormatter.finalMessage(for: chat, accumulated: accumulated).text
+                }
+            }
+            return nil
+        }
+        // Give the stream a moment to establish before the turn goes out.
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        do {
+            _ = try await client.sendChat(
+                sessionKey: target.sessionKey,
+                message: trimmed,
+                agentId: target.agentId
+            )
+        } catch {
+            collector.cancel()
+            stream.cancel()
+            throw error
+        }
+
+        // Bound the wait by cancelling the stream, which ends the collector's iteration and lets
+        // it return. Racing inside a task group would deadlock: the group awaits every child on
+        // throw, and a child awaiting an unstructured Task never unblocks.
+        let watchdog = Task {
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            stream.cancel()
+        }
+        let reply = (try? await collector.value) ?? nil
+        watchdog.cancel()
+        stream.cancel()
+
+        guard let reply, !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "Sent to \(target.name). It is still working — the answer will be in Orion."
+        }
+        return OrionIntentService.spokenReply(reply)
+    }
+
+    private struct ChatTarget {
+        let sessionKey: String
+        let agentId: String?
+        let name: String
+    }
+
+    /// Picks the session a turn should land in: a new one on a named agent, else the most recent.
+    private func resolveTarget(for agentName: String?, using client: OrionClient) async throws -> ChatTarget {
+        if let agentName, !agentName.isEmpty {
+            let agents = try await client.agents()
+            guard let agent = Self.matchAgent(named: agentName, in: agents) else {
+                throw IntentError.failed("Orion has no agent called \(agentName).")
+            }
+            guard let sessionKey = try await client.createSession(agentId: agent.id, label: "From Siri") else {
+                throw IntentError.failed("Could not start a session with \(agent.name).")
+            }
+            return ChatTarget(sessionKey: sessionKey, agentId: agent.id, name: agent.name)
+        }
+        let sessions = try await client.sessions()
+        guard let session = Self.mostRecent(of: sessions) else { throw IntentError.noSessions }
+        return ChatTarget(sessionKey: session.key, agentId: session.agentId, name: session.title)
+    }
+
+    /// Trims a reply to something worth hearing.
+    ///
+    /// Siri reading four paragraphs aloud is a worse outcome than a short answer plus the app.
+    /// Cuts at a sentence boundary where one is near the limit, so speech does not stop mid-clause.
+    static func spokenReply(_ text: String, limit: Int = 360) -> String {
+        let collapsed = text
+            .replacingOccurrences(of: "\n+", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: " +", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard collapsed.count > limit else { return collapsed }
+
+        let window = String(collapsed.prefix(limit))
+        // Prefer the last sentence end in the final third, so the cut lands naturally.
+        if let cut = window.lastIndex(where: { ".!?".contains($0) }),
+           window.distance(from: window.startIndex, to: cut) > limit * 2 / 3 {
+            return String(window[...cut]) + " There is more in Orion."
+        }
+        let words = window.split(separator: " ").dropLast()
+        return words.joined(separator: " ") + "… There is more in Orion."
+    }
+
     /// Names spoken aloud arrive without punctuation or casing, so matching is forgiving.
     static func matchAgent(named name: String, in agents: [DesktopAgent]) -> DesktopAgent? {
         let target = normalize(name)

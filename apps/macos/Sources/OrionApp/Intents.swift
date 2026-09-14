@@ -29,7 +29,7 @@ struct CheckOrionStatusIntent: AppIntent {
 struct SendToOrionIntent: AppIntent {
     static let title: LocalizedStringResource = "Send a Message to Orion"
     static let description = IntentDescription(
-        "Sends a message to an Orion agent on the Mini. The run continues there whether or not this Mac stays awake.",
+        "Sends a message to an Orion agent and speaks the reply if it arrives quickly. The run continues on the Mini either way.",
         categoryName: "Chat"
     )
     static let openAppWhenRun = false
@@ -48,8 +48,13 @@ struct SendToOrionIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         do {
-            let confirmation = try await OrionIntentService().send(message: message, toAgentNamed: agent)
-            return .result(dialog: IntentDialog(stringLiteral: confirmation))
+            // Waits briefly for the answer rather than only confirming the send. A quick reply is
+            // spoken; a slow run is left going on the Mini and said to be still working.
+            let reply = try await OrionIntentService().sendAwaitingReply(
+                message: message,
+                toAgentNamed: agent
+            )
+            return .result(dialog: IntentDialog(stringLiteral: reply))
         } catch {
             // Surfaced as speech rather than thrown, so Siri says something useful instead of
             // "something went wrong".
