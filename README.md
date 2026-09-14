@@ -2,6 +2,8 @@
 
 # ORION
 
+[![CI](https://github.com/tol518/orion-personal-ai-operating-system/actions/workflows/ci.yml/badge.svg)](https://github.com/tol518/orion-personal-ai-operating-system/actions/workflows/ci.yml)
+
 ORION is a personal AI operating system built around an OpenClaw deployment. It brings agent sessions, memory-backed chat, workflow learning, authorized data extraction, job-application assistance, node control, screen mirroring, and usage reporting into one React control center.
 
 The project demonstrates how to turn capable AI agents into a usable, stateful product: a React and TypeScript interface, an Express backend-for-frontend, WebSocket gateway integration, SQLite persistence, Obsidian-backed memory, neural relationship processing, browser workflows, human approval gates, and defensive access controls.
@@ -48,11 +50,13 @@ The implementation behind the product remains available to inspect: the React in
 - [Nodes, screens, and usage](#nodes-screens-and-usage)
 - [API and event model](#api-and-event-model)
 - [Persistence](#persistence)
+- [Local plugin runtime](#local-plugin-runtime)
 - [Configuration](#configuration)
 - [Local setup](#local-setup)
 - [Running ORION](#running-orion)
 - [Security](#security)
 - [Testing](#testing)
+- [Continuous integration](#continuous-integration)
 - [Troubleshooting](#troubleshooting)
 - [Known limitations](#known-limitations)
 - [Contributing](#contributing)
@@ -71,14 +75,16 @@ The implementation behind the product remains available to inspect: the React in
 | Workflow learning | Marks a local observation window, redacts it, produces a reviewable workflow draft, stores the approved recipe, and replays it with confirmation gates. |
 | Hunting | Maintains a canonical CV and search profile, discovers roles, prepares application artifacts, fills verified fields, stops for human checkpoints, and records application history. |
 | Nodes and screens | Lists paired OpenClaw nodes, removes offline nodes, takes screen snapshots on demand, and supports bounded manual click and scroll control when a node advertises it. |
+| Local plugins | Loads reviewed sibling packages through a small generic SDK, mounts authenticated plugin APIs and assets, and adds their custom-element pages to desktop and mobile navigation. |
 
 ## Architecture
 
-ORION has three main runtime boundaries:
+ORION has four main runtime boundaries:
 
 1. The React client renders the control surface and calls only the BFF.
 2. The Express BFF owns credentials, persistence, orchestration state, safety checks, and local service integrations.
 3. OpenClaw owns agent definitions, sessions, models, tools, node execution, browser control, and the underlying LLM runs.
+4. Optional local plugins own their domain state and services while depending only on ORION's generic plugin SDK. ORION core does not import a plugin's feature code.
 
 ```mermaid
 flowchart TB
@@ -96,6 +102,8 @@ flowchart TB
   BFF --> Observer["Local workflow observation service"]
   BFF --> Nodes["Paired Mac and Windows nodes"]
   BFF --> Extraction["Authorized provider workspaces"]
+  BFF --> PluginRuntime["Generic local plugin runtime"]
+  PluginRuntime --> Plugins["Reviewed sibling plugin packages"]
 ```
 
 ### Startup sequence
@@ -165,8 +173,11 @@ The repository has separate `package-lock.json` files for `client/` and `server/
 |   |-- hunting/                    # CV, discovery, application, document, and browser services
 |   |-- execution-target.js         # Per-session Mac, Windows, or neutral execution binding
 |   |-- human-screen-control.js     # Short-lived manual screen-control leases
+|   |-- orion-plugin-runtime.js     # Generic local plugin loader and lifecycle
 |   `-- data/                       # Runtime SQLite database and local artifacts
+|-- packages/orion-plugin-sdk/      # Minimal plugin contract; no feature-specific imports
 |-- openclaw-plugin/                # Browser-only policy for Hunting agent sessions
+|-- docs/plugin-runtime.md          # Local plugin package, API, UI, and failure contracts
 |-- docs/workflow-learning.md       # Detailed workflow-learning notes
 |-- design/                         # UI design references
 `-- ops/                            # Local process-service template
@@ -531,6 +542,7 @@ The React client uses a same-origin `/api` surface. Successful JSON responses us
 | Hunting | `/api/hunting` access, CV, discovery, application, takeover, and document routes | Hunting service modules |
 | Nodes and screens | `/api/nodes`, screen-control, screen-input, and node-invoke routes | Gateway, screen bridge, and control lease service |
 | Usage | `/api/usage` | Gateway usage, local usage reader, and pricing helpers |
+| Local plugins | `/api/plugins`, `/api/plugins/<plugin-id>/*` | Generic plugin runtime plus the installed plugin owner |
 
 The SSE stream sends initial gateway and memory status, keeps the connection alive with comments, and forwards selected gateway events. Internal document, neural, workflow-learning, and application-agent sessions are filtered so their private model turns do not appear as ordinary chat messages.
 
@@ -544,6 +556,15 @@ The SSE stream sends initial gateway and memory status, keeps the connection ali
 | Authorized extraction workspace | Run manifests, control state, heartbeats, per-date CSV files, combined CSV output, and `Custom_Extractors/` packages | Root is configurable. The BFF indexes and validates files but agents produce them. |
 | Local artifact directories | Prepared CVs, cover letters, and interview notes | Paths can be overridden for the local deployment. |
 | Observation service storage | Raw screen and audio capture | Owned by the observation service. ORION stores only its bounded redacted digest. |
+| `server/data/plugins/<plugin-id>/` | Plugin-owned database and artifacts | Private per-plugin state. The plugin defines its schema and lifecycle. |
+
+## Local plugin runtime
+
+ORION can add domain capabilities without making core depend on them. Set `ORION_PLUGIN_PATHS` to a comma-separated list of reviewed local package roots, restart the BFF, and ORION loads each package's declared entry. Successful plugins can mount one authenticated API router, serve built assets, register custom-element navigation, publish namespaced events, and clean up during shutdown.
+
+The loader resolves entry and asset paths through real paths contained by the package root, rejects duplicate IDs and routes, and mounts nothing until initialization succeeds. A broken plugin is reported by `/api/plugins` without preventing later plugins from loading.
+
+See [Local plugin runtime](docs/plugin-runtime.md) for the package contract, SDK methods, browser attributes, security model, and a complete registration example. Feature packages remain separate sibling repositories; do not copy them into ORION core.
 
 ## Configuration
 
@@ -579,6 +600,7 @@ SCREENPIPE_API_KEY=<LOCAL_OBSERVATION_SERVICE_TOKEN>
 | `PORT` | Express listen port. The implemented default is `4820`. |
 | `HOST` | BFF listen address. The safe default is `127.0.0.1`. |
 | `JARVIS_ACCESS_PASSWORD` | Required whole-dashboard password. Successful login creates an HttpOnly, same-site session cookie. |
+| `ORION_PLUGIN_PATHS` | Optional comma-separated absolute roots of reviewed local ORION plugin packages. Blank loads none. |
 | `JARVIS_ALLOWED_ORIGINS` | Optional comma-separated exact browser origins. Loopback production and Vite origins are included automatically. |
 | `MEMORY_ACCESS_PASSWORD` | Password for the Second Brain section. Without it, the memory workspace remains locked. |
 | `OBSIDIAN_VAULT` | Absolute path to the memory vault. |
@@ -645,6 +667,8 @@ npm ci
 ```
 
 Edit `server/.env` with local values. At minimum, set a strong `JARVIS_ACCESS_PASSWORD` plus a valid gateway URL and token. The server can start without Obsidian or Hunting configuration, but those sections will report unavailable or locked state.
+
+Optional domain plugins remain separate sibling checkouts. Build each plugin, add its absolute root to `ORION_PLUGIN_PATHS`, and restart the BFF. Plugin-specific environment variables stay server-side. Do not put plugin tokens or provider credentials in the Vite client.
 
 ### Fresh installation versus an existing private deployment
 
@@ -765,6 +789,10 @@ npm run build
 ```
 
 The client build runs strict TypeScript checking before Vite. The repository has no client test script and no lint script. Two server tests exercise generated CV PDFs and therefore need an installed, launchable Chrome or Chromium process; they fail in environments that block browser startup. The sprite-background tests need `@napi-rs/canvas`, which is installed with the server dependencies.
+
+## Continuous integration
+
+The GitHub Actions workflow in `.github/workflows/ci.yml` runs on pull requests targeting `main`, pushes to `main`, and manual dispatches. It runs the server test suite, the OpenClaw plugin policy tests, the client production build, and the public-release safety check as separate jobs so failures identify the affected part of the project.
 
 ## Troubleshooting
 
