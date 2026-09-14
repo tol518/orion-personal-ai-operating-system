@@ -129,7 +129,12 @@ public actor OrionClient {
         guard var components = URLComponents(string: withScheme), let hostName = components.host,
               !hostName.isEmpty
         else { throw OrionClientError.notConfigured }
-        if components.port == nil { components.port = 4820 }
+        // The BFF's own port when spoken to directly, but 443 behind a TLS front such as
+        // Tailscale Serve — which is the whole reason someone types https in the first place.
+        // Defaulting to 4820 for an https address sends the app at a port that is not listening.
+        if components.port == nil {
+            components.port = components.scheme == "https" ? 443 : 4820
+        }
         components.path = ""
         components.query = nil
         guard let url = components.url else { throw OrionClientError.notConfigured }
