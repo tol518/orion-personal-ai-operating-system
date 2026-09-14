@@ -99,6 +99,41 @@ final class LiveIntegrationTests: XCTestCase {
         }
     }
 
+    /// What Siri does: send a turn and speak the answer if it arrives quickly.
+    func testIntentServiceSpeaksTheReply() async throws {
+        // Pair once, then hand the same credential to the intent service, which builds its own
+        // client exactly as it does when Siri launches the app in the background.
+        let credentials = InMemoryCredentialStore()
+        let paired = OrionClient(credentials: credentials)
+        try await paired.configure(host: host)
+        _ = try await paired.pair(pairingSecret: secret, clientId: "siri-probe", clientName: "Siri")
+
+        let defaults = UserDefaults(suiteName: "app.orion.tests.\(UUID().uuidString)")!
+        defaults.set(host, forKey: "orion.host")
+        defer { defaults.removePersistentDomain(forName: defaults.description) }
+
+        let service = OrionIntentService(
+            settingsStore: SettingsStore(defaults: defaults),
+            makeClient: { OrionClient(credentials: credentials) }
+        )
+
+        let agents = try await paired.agents()
+        let agentName = try XCTUnwrap(agents.first?.name)
+        let spoken = try await service.sendAwaitingReply(
+            message: "Are both machines up?",
+            toAgentNamed: agentName,
+            timeout: 15
+        )
+
+        XCTAssertFalse(spoken.isEmpty)
+        XCTAssertFalse(
+            spoken.contains("still working"),
+            "the reply should have arrived inside the window, got: \(spoken)"
+        )
+        // The agent's actual words, not just a confirmation that something was sent.
+        XCTAssertTrue(spoken.lowercased().contains("reachable"), "unexpected reply: \(spoken)")
+    }
+
     /// The acceptance criterion: a turn sent from this Mac streams back into the native transcript.
     func testChatTurnStreamsBack() async throws {
         let client = try await pairedClient()

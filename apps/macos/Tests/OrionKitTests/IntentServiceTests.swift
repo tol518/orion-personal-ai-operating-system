@@ -93,6 +93,65 @@ final class OrionIntentServiceTests: XCTestCase {
         }
     }
 
+    // MARK: Spoken replies
+
+    func testAShortReplyIsSpokenWhole() {
+        let reply = OrionIntentService.spokenReply("Both machines are reachable.")
+        XCTAssertEqual(reply, "Both machines are reachable.")
+    }
+
+    func testNewlinesCollapseSoSpeechDoesNotStutter() {
+        let reply = OrionIntentService.spokenReply("Line one.\n\nLine two.\n   Line three.")
+        XCTAssertEqual(reply, "Line one. Line two. Line three.")
+    }
+
+    func testALongReplyCutsAtASentenceBoundary() {
+        // Siri reading four paragraphs aloud is worse than a short answer plus the app.
+        let sentence = "The deployment finished and every check passed. "
+        let long = String(repeating: sentence, count: 20)
+        let reply = OrionIntentService.spokenReply(long)
+
+        XCTAssertLessThan(reply.count, 420)
+        XCTAssertTrue(reply.hasSuffix("There is more in Orion."), reply)
+        // The cut lands after a full stop, not mid-clause.
+        let body = reply.replacingOccurrences(of: " There is more in Orion.", with: "")
+        XCTAssertTrue(body.hasSuffix("."), "cut mid-sentence: “\(body.suffix(40))”")
+    }
+
+    func testALongReplyWithNoSentenceEndCutsAtAWord() {
+        let long = String(repeating: "alpha ", count: 200)
+        let reply = OrionIntentService.spokenReply(long)
+        XCTAssertTrue(reply.contains("…"), reply)
+        XCTAssertFalse(reply.contains("alph "), "a word was split")
+    }
+
+    func testTheLimitIsHonoured() {
+        let reply = OrionIntentService.spokenReply(String(repeating: "word ", count: 500), limit: 50)
+        XCTAssertLessThan(reply.count, 100)
+    }
+
+    func testSendAwaitingReplyStillRefusesAnEmptyMessage() async {
+        do {
+            _ = try await service(host: "mini.example", token: "t").sendAwaitingReply(message: "  ")
+            XCTFail("an empty message should not be sent")
+        } catch let error as OrionIntentService.IntentError {
+            XCTAssertEqual(error, .failed("There was no message to send."))
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    func testSendAwaitingReplyFromAnUnconfiguredMacExplainsWhy() async {
+        do {
+            _ = try await service().sendAwaitingReply(message: "status?")
+            XCTFail("should not send")
+        } catch let error as OrionIntentService.IntentError {
+            XCTAssertEqual(error, .notConfigured)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
     // MARK: Agent matching
 
     func testMatchesAnAgentSpokenWithoutPunctuationOrCase() throws {
