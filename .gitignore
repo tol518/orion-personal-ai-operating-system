@@ -61,3 +61,6 @@ apps/macos/*.xcworkspace/xcuserdata/
 DerivedData/
 *.dSYM/
 *.app/
+
+# Generated from Resources/Orion.iconset by `make icon`
+apps/macos/build/Orion.icns

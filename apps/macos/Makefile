@@ -17,7 +17,7 @@ XCODE_VERSION := $(shell xcodebuild -version 2>/dev/null | tail -1 | awk '{print
 TARGET_TRIPLE := $(shell uname -m)-apple-macos14.0
 DEPLOYMENT_TARGET := 14.0
 
-.PHONY: all build test app appintents run clean
+.PHONY: all build test app appintents icon run clean
 
 all: app
 
@@ -66,6 +66,17 @@ appintents: build
 		echo "warning: App Intents metadata extraction failed — Siri will not see Orion's intents."; \
 	fi
 
+# Compile the icon set into an .icns.
+#
+# The .iconset is the committed source; the .icns is generated, because a megabyte of binary in
+# version control that nobody can diff is worse than one iconutil call at build time.
+#
+# To regenerate the iconset itself from a new logo:
+#   swiftc -O Tools/make-icon.swift -o /tmp/make-icon && /tmp/make-icon <logo.png> Resources/Orion.iconset
+icon:
+	@mkdir -p build
+	@iconutil -c icns Resources/Orion.iconset -o build/Orion.icns && echo "Built build/Orion.icns"
+
 # Assemble the .app around the built executable.
 #
 # The ad-hoc signature at the end is what lets the app hold a stable Keychain identity, ask for
@@ -78,6 +89,8 @@ app: build
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
+	$(MAKE) icon
+	cp build/Orion.icns $(APP)/Contents/Resources/Orion.icns
 	cp $(BUILD_DIR)/OrionApp $(APP)/Contents/MacOS/OrionApp
 	printf 'APPL????' > $(APP)/Contents/PkgInfo
 	$(MAKE) appintents
