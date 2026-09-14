@@ -85,6 +85,33 @@ public struct OrionIntentService: Sendable {
         }
     }
 
+    /// One spoken sentence about token spend and the Codex allowance.
+    public func usageSentence(range: String = "7d") async -> String {
+        do {
+            let client = try await connectedClient()
+            return UsageFormatter.spokenSummary(try await client.usage(range: range))
+        } catch let error as IntentError {
+            return error.localizedDescription
+        } catch let error as OrionClientError {
+            if case .server(503, _) = error { return "This Mini does not report usage yet." }
+            return "Orion could not read usage. \(error.localizedDescription)"
+        } catch {
+            return "Orion could not read usage."
+        }
+    }
+
+    /// Just the Codex allowance, for the narrower question.
+    public func codexAllowanceSentence() async -> String {
+        do {
+            let client = try await connectedClient()
+            return UsageFormatter.spokenCodexLimit(try await client.usage().codexWeeklyLimit)
+        } catch let error as IntentError {
+            return error.localizedDescription
+        } catch {
+            return "Orion could not read the Codex allowance."
+        }
+    }
+
     /// Sends a turn to the most recent session, or to a new session on the named agent.
     ///
     /// Deliberately does not wait for the reply: a spoken request should confirm quickly, and the

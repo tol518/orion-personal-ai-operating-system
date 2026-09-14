@@ -80,6 +80,7 @@ export function createDesktopApi({
   subscribe,
   remoteAccess,
   decorateNodes,
+  usageReport,
 }) {
   const router = express.Router();
 
@@ -266,6 +267,21 @@ export function createDesktopApi({
     }
   });
 
+  // ---- Usage --------------------------------------------------------------
+  // Projects the shared usage report into something a native screen and a spoken sentence can
+  // both use. The heavy lifting — gateway usage, Codex desktop logs, pricing — already happened
+  // in buildUsageReport; this only reshapes it.
+  router.get("/usage", async (req, res) => {
+    if (!usageReport) return fail(res, "Usage reporting is not configured", 503);
+    const range = typeof req.query.range === "string" ? req.query.range.trim() : "7d";
+    if (!/^\d{1,3}d$/.test(range)) return fail(res, "range must look like 7d", 400);
+    try {
+      ok(res, toUsageSummary(await usageReport(range), range));
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
   // ---- Remote access ------------------------------------------------------
   // Orion reports which native remote-desktop service is reachable on each node and records that
   // a session was opened. It never proxies a framebuffer or injects input: macOS Screen Sharing
@@ -348,6 +364,64 @@ export function createDesktopApi({
   });
 
   return router;
+}
+
+/**
+ * Reshapes the full usage report for the desktop surface.
+ *
+ * Costs are reported alongside `estimated`, because pricing covers only the models the BFF knows
+ * rates for. Presenting a partial figure as a definitive spend would be the kind of number people
+ * make decisions on, so the gap is stated rather than hidden.
+ */
+export function toUsageSummary(report, range) {
+  const attribution = report?.attribution ?? {};
+  const agents = attribution.agents ?? {};
+  const limit = attribution.codexWeeklyLimit ?? null;
+  const unpriced = attribution.pricing?.unpricedModels ?? [];
+
+  return {
+    range,
+    total: totalsOf(attribution.combined),
+    agents: Object.entries(agents)
+      .map(([agentId, totals]) => ({ agentId, ...totalsOf(totals) }))
+      .filter((entry) => entry.totalTokens > 0 || entry.totalCost > 0)
+      .sort((left, right) => right.totalTokens - left.totalTokens),
+    // The Codex weekly allowance, which is a percentage window rather than a token count.
+    codexWeeklyLimit: limit
+      ? {
+          usedPercent: round(limit.usedPercent, 1),
+          remainingPercent: round(limit.remainingPercent, 1),
+          planType: limit.planType ?? null,
+          resetsAt: Number.isFinite(limit.resetsAt) ? new Date(limit.resetsAt).toISOString() : null,
+          updatedAt: Number.isFinite(limit.updatedAt) ? new Date(limit.updatedAt).toISOString() : null,
+        }
+      : null,
+    pricing: {
+      // Non-empty means the cost figures are a floor, not a total.
+      unpricedModels: unpriced,
+      estimated: unpriced.length > 0,
+    },
+  };
+}
+
+function totalsOf(totals) {
+  const value = totals && typeof totals === "object" ? totals : {};
+  return {
+    totalTokens: numberOf(value.totalTokens),
+    totalCost: round(numberOf(value.totalCost), 4),
+    input: numberOf(value.input),
+    output: numberOf(value.output),
+    cacheRead: numberOf(value.cacheRead),
+  };
+}
+
+function numberOf(value) {
+  return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function round(value, places) {
+  const factor = 10 ** places;
+  return Math.round(numberOf(value) * factor) / factor;
 }
 
 /** Projects a gateway node into the plan's read-only DesktopNodeSummary shape. */

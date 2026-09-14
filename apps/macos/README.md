@@ -76,6 +76,7 @@ The app shows the client id it will pair as; that is the value for
 | Agents | Existing agents and their available models; start a session |
 | Chat | Session list, transcript, streamed replies, failure state |
 | Nodes | Status and capabilities per paired node, plus one-click remote desktop |
+| Usage | Token spend by agent and the Codex weekly allowance |
 | Settings | Address, pairing, notifications, and what this app can reach |
 
 ## Remote desktop
