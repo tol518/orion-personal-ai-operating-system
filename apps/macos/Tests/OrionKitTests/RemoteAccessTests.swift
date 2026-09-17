@@ -202,6 +202,58 @@ final class RemoteAccessDecodingTests: XCTestCase {
         XCTAssertNil(response.machines)
     }
 
+    func testDecodesExposureAndFlagsLANReachability() throws {
+        let json = """
+        {"nodes":[{"nodeId":"n","host":"pc.example","hostSource":"configured","hint":null,
+          "services":[{"kind":"remote-desktop","label":"Remote Desktop","port":3389,"scheme":"rdp",
+            "launchable":true,"reachable":true,
+            "exposure":{"bind":"all-interfaces","scope":"lan",
+              "fix":{"summary":"Scope the firewall.","command":"Set-NetFirewallRule ...",
+                     "shell":"powershell (elevated)","rollback":"Set-NetFirewallRule -RemoteAddress Any"}}}]}]}
+        """
+        let response = try JSONDecoder().decode(RemoteAccessResponse.self, from: Data(json.utf8))
+        let rdp = try XCTUnwrap(response.nodes[0].services.first)
+        XCTAssertTrue(rdp.isExposedBeyondTailnet)
+        XCTAssertEqual(rdp.exposure?.bind, "all-interfaces")
+        XCTAssertEqual(rdp.exposure?.fix?.command, "Set-NetFirewallRule ...")
+        XCTAssertTrue(rdp.exposure?.summary.contains("every network interface") ?? false)
+    }
+
+    func testAPrivateBindIsNotFlagged() throws {
+        let json = """
+        {"nodes":[{"nodeId":"n","host":"h","hostSource":"tailnet","hint":null,
+          "services":[{"kind":"screen-sharing","label":"Screen Sharing","port":5900,"scheme":"vnc",
+            "launchable":true,"reachable":true,
+            "exposure":{"bind":"tailnet-only","scope":"private","fix":null}}]}]}
+        """
+        let response = try JSONDecoder().decode(RemoteAccessResponse.self, from: Data(json.utf8))
+        XCTAssertFalse(response.nodes[0].services[0].isExposedBeyondTailnet)
+        XCTAssertEqual(response.nodes[0].services[0].exposure?.summary, "Bound to Tailscale only.")
+    }
+
+    func testExposureIsOptionalForOlderMinis() throws {
+        // A Mini running a build without the bind check omits the field entirely.
+        let json = """
+        {"nodes":[{"nodeId":"n","host":"h","hostSource":"tailnet","hint":null,
+          "services":[{"kind":"screen-sharing","label":"Screen Sharing","port":5900,"scheme":"vnc","launchable":true,"reachable":true}]}]}
+        """
+        let response = try JSONDecoder().decode(RemoteAccessResponse.self, from: Data(json.utf8))
+        XCTAssertNil(response.nodes[0].services[0].exposure)
+        XCTAssertFalse(response.nodes[0].services[0].isExposedBeyondTailnet, "absence must not read as exposure")
+    }
+
+    func testUnknownExposureIsNotFlaggedAsExposed() throws {
+        // Unknown means unchecked. Alarming on it would train the user to ignore the warning.
+        let json = """
+        {"nodes":[{"nodeId":"n","host":"h","hostSource":"configured","hint":null,
+          "services":[{"kind":"remote-desktop","label":"Remote Desktop","port":3389,"scheme":"rdp","launchable":true,"reachable":true,
+            "exposure":{"bind":"unknown","scope":null,"fix":null}}]}]}
+        """
+        let response = try JSONDecoder().decode(RemoteAccessResponse.self, from: Data(json.utf8))
+        XCTAssertFalse(response.nodes[0].services[0].isExposedBeyondTailnet)
+        XCTAssertEqual(response.nodes[0].services[0].exposure?.summary, "Interface exposure could not be checked.")
+    }
+
     func testAnUnreachableServiceIsNotLaunchable() throws {
         let json = """
         {"nodes":[{"nodeId":"n","host":"h.example","hostSource":"configured","hint":null,

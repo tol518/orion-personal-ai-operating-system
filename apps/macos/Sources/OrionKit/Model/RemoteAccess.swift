@@ -14,6 +14,43 @@ public struct RemoteService: Decodable, Sendable, Identifiable, Equatable {
     public let scheme: String?
     public let launchable: Bool
     public let reachable: Bool
+    /// Which interfaces the port is bound to. Absent on Minis older than this check.
+    public let exposure: ServiceExposure?
+
+    /// True when the service answers on networks beyond the tailnet — the office LAN, say.
+    public var isExposedBeyondTailnet: Bool { exposure?.scope == "lan" }
+}
+
+/// How a remote-desktop port is bound, as reported by the machine itself.
+///
+/// Reachability over the tailnet is not the whole story: a port that answers everywhere is also
+/// reachable from whatever network the machine sits on. macOS Screen Sharing and Windows RDP both
+/// bind that way by default, and nothing in either OS points it out.
+public struct ServiceExposure: Decodable, Sendable, Equatable {
+    /// The exact remediation, or an honest note when none exists.
+    public struct Fix: Decodable, Sendable, Equatable {
+        public let summary: String
+        public let command: String?
+        public let shell: String?
+        public let rollback: String?
+    }
+
+    /// all-interfaces | specific | tailnet-only | loopback-only | not-listening | unknown
+    public let bind: String
+    /// lan | private | local, or nil when not listening or unknown
+    public let scope: String?
+    public let fix: Fix?
+
+    public var summary: String {
+        switch bind {
+        case "all-interfaces": return "Answers on every network interface, not just your tailnet."
+        case "specific": return "Bound to a non-tailnet address — reachable from that network."
+        case "tailnet-only": return "Bound to Tailscale only."
+        case "loopback-only": return "Bound to this machine only."
+        case "not-listening": return "Not listening."
+        default: return "Interface exposure could not be checked."
+        }
+    }
 }
 
 public struct RemoteAccessNode: Decodable, Sendable, Identifiable, Equatable {
