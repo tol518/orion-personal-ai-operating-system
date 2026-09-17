@@ -116,6 +116,14 @@ ORION_REMOTE_ACCESS_HOSTS=node-abc=pc.your-tailnet.ts.net
 With the Tailscale CLI installed on the Mini, nodes are matched to tailnet peers by name
 automatically — but only when the match is unambiguous, so an override is always available.
 
+Each card also says **which interfaces** a service is bound to, because reachability over the
+tailnet is not the whole story. macOS Screen Sharing and Windows RDP both listen on every
+interface by default, which makes them reachable from whatever office or café network the machine
+is on — and neither OS points that out. When a service answers beyond the tailnet, the card shows
+a warning with the exact fix beside it (a firewall command for Windows; an honest note for macOS,
+which has no bind setting). Orion only reports this; closing a port is the OS's job, and applying
+a firewall rule is a device action that needs your explicit go-ahead.
+
 Every connection is recorded on the Mini: which client opened which service on which node, and
 when. No credential and no screen content is in that record.
 

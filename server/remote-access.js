@@ -11,6 +11,7 @@
 import net from "node:net";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { describeExposure } from "./exposure.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -94,6 +95,10 @@ export class RemoteAccessDirectory {
     machines = "",
     probe,
     listPeers,
+    // Bind inspection is optional. Without an inspector every service reports bind "unknown",
+    // which is honest: reachability was checked, interface exposure was not.
+    inspectLocalBinds = null,
+    inspectNodeBinds = null,
     probeTimeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
     cacheTtlMs = DEFAULT_CACHE_TTL_MS,
     now = () => Date.now(),
@@ -102,6 +107,9 @@ export class RemoteAccessDirectory {
     this.machines = parseMachines(machines);
     this.probeReachable = probe ?? probeTcpPort;
     this.listPeers = listPeers ?? listTailnetPeers;
+    this.inspectLocalBinds = inspectLocalBinds;
+    this.inspectNodeBinds = inspectNodeBinds;
+    this.bindCache = new Map();
     this.probeTimeoutMs = probeTimeoutMs;
     this.cacheTtlMs = cacheTtlMs;
     this.now = now;
@@ -139,6 +147,10 @@ export class RemoteAccessDirectory {
     const candidates = REMOTE_SERVICES.filter(
       (service) => platform === "unknown" || service.platforms.includes(platform),
     );
+    const binds = await this.cachedBinds(
+      `node:${node.id ?? node.nodeId}`,
+      this.inspectNodeBinds ? () => this.inspectNodeBinds(node) : null,
+    );
     const services = await Promise.all(
       candidates.map(async (service) => ({
         kind: service.kind,
@@ -147,6 +159,7 @@ export class RemoteAccessDirectory {
         scheme: service.scheme,
         launchable: service.scheme !== null,
         reachable: await this.cachedProbe(host, service.port),
+        exposure: describeExposure({ platform, kind: service.kind, port: service.port, binds }),
       })),
     );
     return {
@@ -182,6 +195,7 @@ export class RemoteAccessDirectory {
         hostSource = "tailnet";
       }
     }
+    const binds = await this.cachedBinds("self", this.inspectLocalBinds);
     const services = await Promise.all(
       REMOTE_SERVICES.filter((service) => service.platforms.includes("macos")).map(
         async (service) => ({
@@ -192,6 +206,7 @@ export class RemoteAccessDirectory {
           launchable: service.scheme !== null,
           // Loopback: this is the host running the probe.
           reachable: await this.cachedProbe("127.0.0.1", service.port),
+          exposure: describeExposure({ platform: "macos", kind: service.kind, port: service.port, binds }),
         }),
       ),
     );
@@ -226,6 +241,8 @@ export class RemoteAccessDirectory {
               scheme: service.scheme,
               launchable: service.scheme !== null,
               reachable: await this.cachedProbe(machine.host, service.port),
+              // No agent runs on a configured machine, so its interfaces cannot be inspected.
+              exposure: describeExposure({ platform: machine.platform, kind: service.kind, port: service.port, binds: null }),
             }),
           ),
         ),
@@ -242,6 +259,24 @@ export class RemoteAccessDirectory {
     const override = this.overrides.get(nodeId);
     if (override) return override;
     return matchPeer(peers, node);
+  }
+
+  /**
+   * Listening binds for a target, cached like probes. A failed or unavailable inspection yields
+   * null, which surfaces as bind "unknown" rather than as an error or a false "private".
+   */
+  async cachedBinds(key, inspect) {
+    if (typeof inspect !== "function") return null;
+    const cached = this.bindCache.get(key);
+    if (cached && cached.expiresAt > this.now()) return cached.binds;
+    let binds = null;
+    try {
+      binds = await inspect();
+    } catch {
+      binds = null;
+    }
+    this.bindCache.set(key, { binds, expiresAt: this.now() + this.cacheTtlMs });
+    return binds;
   }
 
   /** Probes are cached briefly: the Nodes screen refreshes often and a port does not flap. */

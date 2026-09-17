@@ -114,6 +114,25 @@ itself and validates the scheme against a two-entry allowlist (`vnc`, `rdp`) and
 an explicit character and label check. That URL is handed to the window server to launch an
 application, so a compromised or buggy server must not be able to choose an arbitrary one.
 
+### Interface exposure
+
+Each remote-access service entry carries an `exposure` block:
+
+```ts
+{ bind: "all-interfaces" | "specific" | "tailnet-only" | "loopback-only" | "not-listening" | "unknown",
+  scope: "lan" | "private" | "local" | null,
+  fix: { summary, command, shell, rollback } | null }
+```
+
+Reachability alone is the wrong question: a service that answers on the tailnet *because it
+answers on every interface* is also reachable from the machine's LAN. The BFF inspects the
+Mini's own listeners with `netstat`, and paired nodes' with the same read-only `system.run` path
+it already uses (`netstat` on Unix, `Get-NetTCPConnection` on Windows). Results are cached like
+probes. An unavailable inspection reports `unknown`, never a false `private`.
+
+`fix` is populated only for `scope: "lan"` and is advisory. Applying it is a device action; the
+BFF does not run firewall commands.
+
 ## Deliberate omissions in V1
 
 No extraction, Hunting, Finance Lab, workflow learning, broker control, terminal execution,

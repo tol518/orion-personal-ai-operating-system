@@ -149,6 +149,9 @@ struct MiniCard: View {
                             .foregroundStyle(.tertiary)
                     }
                 }
+                ForEach(access.services.filter(\.isExposedBeyondTailnet)) { service in
+                    ExposureWarning(service: service)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -207,6 +210,9 @@ struct MachineCard: View {
                                 .foregroundStyle(.tertiary)
                         }
                     }
+                }
+                ForEach(machine.services.filter(\.isExposedBeyondTailnet)) { service in
+                    ExposureWarning(service: service)
                 }
             }
             Spacer(minLength: 0)
@@ -321,6 +327,9 @@ struct NodeCard: View {
                     }
                 }
             }
+            ForEach(access.services.filter(\.isExposedBeyondTailnet)) { service in
+                ExposureWarning(service: service)
+            }
         }
     }
 
@@ -355,6 +364,52 @@ struct NodeCard: View {
         case .windows: return "pc"
         case .linux: return "server.rack"
         case .unknown: return "questionmark.square.dashed"
+        }
+    }
+}
+
+/// Shown under a service that answers beyond the tailnet, with the exact fix beside it.
+///
+/// Orion cannot close the port — that is the OS's job, and applying a firewall rule is a device
+/// action that needs explicit consent first. What it can do is refuse to let this stay invisible.
+struct ExposureWarning: View {
+    let service: RemoteService
+
+    var body: some View {
+        if let exposure = service.exposure, service.isExposedBeyondTailnet {
+            VStack(alignment: .leading, spacing: 6) {
+                Label {
+                    Text("\(service.label): \(exposure.summary)")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.shield.fill")
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.orange)
+
+                if let fix = exposure.fix {
+                    Text(fix.summary)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let command = fix.command {
+                        Text(command)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                            .padding(6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                        if let shell = fix.shell {
+                            Text("Run in \(shell). Reconnect from Orion afterwards to confirm it still works.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 }

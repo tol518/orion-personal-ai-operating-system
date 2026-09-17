@@ -13,6 +13,7 @@ import { loadOrionPlugins, parseOrionPluginPaths } from "./orion-plugin-runtime.
 import { DesktopAccess } from "./desktop-access.js";
 import { createDesktopApi, desktopEventFrame } from "./desktop-api.js";
 import { RemoteAccessDirectory } from "./remote-access.js";
+import { createNodeBindInspector, inspectLocalBinds } from "./exposure.js";
 import {
   addUsageTotals,
   buildUsageAttribution,
@@ -294,6 +295,11 @@ const desktopAccess = new DesktopAccess({
 const remoteAccess = new RemoteAccessDirectory({
   hostOverrides: process.env.ORION_REMOTE_ACCESS_HOSTS,
   machines: process.env.ORION_REMOTE_ACCESS_MACHINES,
+  // Which interfaces each remote-desktop port is bound to. Read-only: netstat here, and the
+  // same system.run path the BFF already uses on paired nodes. It changes nothing; it makes an
+  // all-interfaces bind visible instead of leaving it to be discovered by probing weeks later.
+  inspectLocalBinds,
+  inspectNodeBinds: createNodeBindInspector({ gateway }),
 });
 // Workflow learning: Screenpipe is the observation layer, this store is the executable spec and
 // run log, and the Obsidian memory below holds the readable recipe.

@@ -309,3 +309,119 @@ test("a mac machine is offered screen sharing rather than RDP", async () => {
     ["apple-remote-desktop", "screen-sharing"],
   );
 });
+
+// ---- exposure through the directory --------------------------------------------
+
+test("a node's services carry the bind exposure the inspector reports", async () => {
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => PEERS,
+    probe: async () => true,
+    inspectNodeBinds: async (node) =>
+      node.id === "node-pc"
+        ? [{ address: "0.0.0.0", port: 3389 }, { address: "::", port: 3389 }]
+        : null,
+  });
+  const [pc] = await dir.describe([
+    { id: "node-pc", name: "windows-pc", platform: "windows", capabilities: ["exec"] },
+  ]);
+  const rdp = pc.services.find((s) => s.kind === "remote-desktop");
+  assert.equal(rdp.reachable, true);
+  assert.equal(rdp.exposure.bind, "all-interfaces");
+  assert.equal(rdp.exposure.scope, "lan");
+  assert.match(rdp.exposure.fix.command, /Set-NetFirewallRule/);
+});
+
+test("a tailnet-scoped bind is reported as private with no fix", async () => {
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => PEERS,
+    probe: async () => true,
+    inspectNodeBinds: async () => [{ address: "100.122.138.117", port: 3389 }],
+  });
+  const [pc] = await dir.describe([
+    { id: "node-pc", name: "windows-pc", platform: "windows", capabilities: ["exec"] },
+  ]);
+  const rdp = pc.services.find((s) => s.kind === "remote-desktop");
+  assert.equal(rdp.exposure.scope, "private");
+  assert.equal(rdp.exposure.fix, null);
+});
+
+test("without an inspector every service reports bind unknown, never a false private", async () => {
+  const dir = new RemoteAccessDirectory({ listPeers: async () => PEERS, probe: async () => true });
+  const [mini] = await dir.describe([
+    { id: "node-mini", name: "tolgas-mac-mini", platform: "macos", capabilities: ["exec"] },
+  ]);
+  for (const service of mini.services) {
+    assert.deepEqual(service.exposure, { bind: "unknown", scope: null, fix: null });
+  }
+});
+
+test("an inspector that throws degrades to unknown rather than failing the read", async () => {
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => PEERS,
+    probe: async () => true,
+    inspectNodeBinds: async () => {
+      throw new Error("node offline mid-run");
+    },
+  });
+  const [mini] = await dir.describe([
+    { id: "node-mini", name: "tolgas-mac-mini", platform: "macos", capabilities: ["exec"] },
+  ]);
+  assert.equal(mini.services[0].exposure.bind, "unknown");
+  assert.equal(mini.services[0].reachable, true, "reachability is unaffected by a failed inspection");
+});
+
+test("the Mini inspects its own interfaces through the local inspector", async () => {
+  let calls = 0;
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => PEERS,
+    probe: async () => true,
+    inspectLocalBinds: async () => {
+      calls += 1;
+      return [{ address: "*", port: 5900 }];
+    },
+  });
+  const mini = await dir.describeSelf();
+  const screen = mini.services.find((s) => s.kind === "screen-sharing");
+  assert.equal(screen.exposure.bind, "all-interfaces");
+  assert.equal(screen.exposure.scope, "lan");
+  assert.equal(screen.exposure.fix.command, null, "macOS has no bind one-liner, so none is claimed");
+  assert.match(screen.exposure.fix.summary, /pf rule/);
+  const ard = mini.services.find((s) => s.kind === "apple-remote-desktop");
+  assert.equal(ard.exposure.bind, "not-listening", "3283 was not in the bind list");
+  assert.equal(calls, 1);
+});
+
+test("bind inspection is cached like probes", async () => {
+  let calls = 0;
+  let clock = 0;
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => PEERS,
+    probe: async () => true,
+    inspectNodeBinds: async () => {
+      calls += 1;
+      return [{ address: "0.0.0.0", port: 3389 }];
+    },
+    cacheTtlMs: 1_000,
+    now: () => clock,
+  });
+  const node = { id: "node-pc", name: "windows-pc", platform: "windows", capabilities: ["exec"] };
+  await dir.describe([node]);
+  await dir.describe([node]);
+  assert.equal(calls, 1, "the second read should come from the cache");
+  clock += 1_001;
+  await dir.describe([node]);
+  assert.equal(calls, 2, "the cache should expire");
+});
+
+test("a configured machine has no agent, so its exposure is unknown", async () => {
+  const dir = new RemoteAccessDirectory({
+    listPeers: async () => [],
+    probe: async () => true,
+    machines: "Windows PC|pc.example.ts.net|windows",
+    inspectNodeBinds: async () => {
+      throw new Error("must not be called for a configured machine");
+    },
+  });
+  const [machine] = await dir.describeMachines();
+  assert.deepEqual(machine.services[0].exposure, { bind: "unknown", scope: null, fix: null });
+});
