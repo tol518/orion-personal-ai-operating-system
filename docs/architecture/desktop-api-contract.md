@@ -9,7 +9,7 @@ cookie/same-origin auth path still governs it.
 ## Why a separate surface was required
 
 The browser boundary authenticates with a password that sets an `httpOnly` cookie
-(`server/index.js` `/api/auth/login`), and both login and every privileged action are gated on
+(`server/browser-auth.js`), and both login and every privileged action are gated on
 `requestIsSameOrigin(req)` — a check against `ALLOWED_ORIGINS`. A native macOS client has no
 browser origin and cannot satisfy that check, so reusing `/api/auth/login` from `Orion.app` would
 have meant weakening the browser's own protection.
@@ -24,6 +24,35 @@ remote native client, so an adjacent, narrower one was added.
 The desktop router is mounted **before** `app.use("/api", cookieAuthMiddleware)` in
 `server/index.js`. Express matches `/api` as a prefix, so mounting it after that middleware would
 have subjected native requests to the cookie check. Order is load-bearing.
+
+## The browser boundary is one module
+
+The browser API's own authentication — session cookie, sign-in routes, origin check, and the
+`/api` gate — lives in `server/browser-auth.js`, not inline in `index.js`. It used to be six
+separate edits across 3,700 lines, and a deployment assembled by hand from that source ended up
+with none of it, serving every `/api` route to anything that could reach the port.
+
+`index.js` mounts it in four lines, in this order:
+
+```js
+const browserAuth = createBrowserAuth({ password, allowedOrigins, port });
+browserAuth.mountRoutes(app);        // after /api/health, before the gate
+app.use("/api", browserAuth.gate);   // after the desktop router mount, before every other /api route
+browserAuth.assertGateOrder(app);    // immediately before app.listen()
+```
+
+`assertGateOrder()` walks the live Express router at startup and **refuses to start the server**
+if the gate is missing, if any `/api` route is registered ahead of it, if the sign-in routes are
+missing or behind it, or if the desktop router is behind it. Its error names every problem. It
+inspects what will actually run — including routes that private code adds — rather than what the
+public source says. `ORION_ALLOW_UNGATED_API=1` downgrades the refusal to a loud warning, for a
+deliberate and documented choice only.
+
+Porting the boundary to a deployment is therefore: copy `server/browser-auth.js`, add the four
+lines above plus the import, set `JARVIS_ACCESS_PASSWORD` and `JARVIS_ALLOWED_ORIGINS`, and ship
+the client's `AccessGate` so the dashboard can obtain a session. `api-auth-boundary.test.js`
+checks the source-level wiring; `browser-auth.test.js` checks the runtime behaviour against real,
+deliberately misassembled apps.
 
 ## Authentication
 
