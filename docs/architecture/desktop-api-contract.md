@@ -162,6 +162,29 @@ probes. An unavailable inspection reports `unknown`, never a false `private`.
 `fix` is populated only for `scope: "lan"` and is advisory. Applying it is a device action; the
 BFF does not run firewall commands.
 
+### Security review
+
+| Contract | Purpose |
+| --- | --- |
+| `GET /api/v1/desktop/security` | Findings, worst first: whether the browser API is gated, and every service answering beyond the tailnet. |
+| `POST /api/v1/desktop/security/remediate` | Applies one known fix to one node. |
+| `GET /api/v1/desktop/security/audit` | Actor, finding, node, outcome. |
+
+The point is that a user who never reads documentation still ends up secure: the app says what
+is wrong and offers to fix it, rather than leaving them to know a question needs asking.
+
+**Commands are never taken from the client.** A remediate request names a finding id; the command
+is looked up in the `REMEDIATIONS` catalogue in `server/security-review.js`. A compromised client
+can ask for a known fix on a known node and nothing else — no client string reaches a shell.
+
+`automatic: false` marks fixes Orion will not run: OS privacy toggles such as enabling Screen
+Sharing, macOS Screen Sharing's bind (which has no setting), and machines configured by address
+only, which have no agent to run anything on. Those carry instructions and no command rather than
+a button that does nothing.
+
+Applying reads the setting back from the machine afterwards rather than trusting the exit code,
+and records an audit event carrying actor, finding, node, and outcome — never command output.
+
 ## Deliberate omissions in V1
 
 No extraction, Hunting, Finance Lab, workflow learning, broker control, terminal execution,

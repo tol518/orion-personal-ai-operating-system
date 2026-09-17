@@ -217,6 +217,26 @@ public actor OrionClient {
         try await send("usage?range=\(range)")
     }
 
+    /// The security checklist: what is not yet secure, worst first.
+    public func securityFindings() async throws -> [SecurityFinding] {
+        let response: SecurityResponse = try await send("security")
+        return response.findings
+    }
+
+    /// Asks the Mini to apply a known fix. The command lives on the Mini, keyed by finding —
+    /// this sends only which finding to act on, so nothing from here reaches a shell.
+    public func remediate(findingId: String, platform: String) async throws -> RemediationResult {
+        struct Body: Encodable {
+            let findingId: String
+            let platform: String
+        }
+        return try await send(
+            "security/remediate",
+            method: "POST",
+            body: Body(findingId: findingId, platform: platform)
+        )
+    }
+
     /// Which native remote-desktop services the Mini can see, for itself and for each node.
     ///
     /// The Mini's own entry gets the connected address as a fallback, so a Mini that cannot read

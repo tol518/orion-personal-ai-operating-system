@@ -13,6 +13,7 @@ import { loadOrionPlugins, parseOrionPluginPaths } from "./orion-plugin-runtime.
 import { DesktopAccess } from "./desktop-access.js";
 import { createDesktopApi, desktopEventFrame } from "./desktop-api.js";
 import { RemoteAccessDirectory } from "./remote-access.js";
+import { SecurityRemediator } from "./security-review.js";
 import { createNodeBindInspector, inspectLocalBinds } from "./exposure.js";
 import {
   addUsageTotals,
@@ -532,6 +533,9 @@ app.use(
     modelOptionsFromConfig,
     subscribe: subscribeDesktopEvents,
     remoteAccess,
+    remediator: new SecurityRemediator({ gateway }),
+    // Reported so the security checklist can say whether the browser API is gated at all.
+    apiAuthenticated: () => browserAuth.configured,
     usageReport: buildUsageReport,
     decorateNodes: (payload) => windowsScreen.decorateNodeList(payload),
   }),

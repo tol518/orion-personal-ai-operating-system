@@ -77,6 +77,7 @@ The app shows the client id it will pair as; that is the value for
 | Chat | Session list, transcript, streamed replies, failure state |
 | Nodes | Status and capabilities per paired node, plus one-click remote desktop |
 | Usage | Token spend by agent and the Codex weekly allowance |
+| Security | What is not yet secure, with a one-click fix where Orion has one |
 | Settings | Address, pairing, notifications, and what this app can reach |
 
 ## Remote desktop
