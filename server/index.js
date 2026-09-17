@@ -69,6 +69,7 @@ import {
 } from "./hunting/job-application-runner.js";
 import { isFinishedApplication, JobHuntStore } from "./hunting/job-hunt-store.js";
 import { HuntingAccess } from "./hunting/hunting-access.js";
+import { createBrowserAuth } from "./browser-auth.js";
 import {
   BrowserControl,
   openApplicationTab,
@@ -150,17 +151,6 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 4820);
 const HOST = process.env.HOST ?? "127.0.0.1";
-const APP_SESSION_COOKIE = "jarvis_session";
-const ALLOWED_ORIGINS = new Set(
-  String(process.env.JARVIS_ALLOWED_ORIGINS ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean),
-);
-for (const hostname of ["127.0.0.1", "localhost"]) {
-  ALLOWED_ORIGINS.add(`http://${hostname}:${PORT}`);
-  ALLOWED_ORIGINS.add(`http://${hostname}:5173`);
-}
 // Memory-enriched user turns can exceed OpenClaw's 8k display default before the original
 // message appears. Keep this below the gateway's 128 KiB single-message cap so history can
 // restore the full envelope and the client can render only the user-authored section.
@@ -282,8 +272,17 @@ const documentReview = new DocumentReviewService({ gateway });
 const interviewPrep = new InterviewPrepService({ gateway, dir: INTERVIEW_PREP_DIR });
 const huntingAccess = new HuntingAccess({ password: process.env.HUNTING_ACCESS_PASSWORD });
 const memoryAccess = new HuntingAccess({ password: process.env.MEMORY_ACCESS_PASSWORD });
-const appAccess = new HuntingAccess({ password: process.env.JARVIS_ACCESS_PASSWORD });
-// Native macOS client boundary. Separate from appAccess because the browser gate is bound to a
+// The browser API's authentication boundary: session cookie, sign-in routes, and the gate, in
+// one module so it ports as one file. It refuses to start the server if mounted out of order —
+// see the assertGateOrder() call before app.listen().
+const browserAuth = createBrowserAuth({
+  password: process.env.JARVIS_ACCESS_PASSWORD,
+  allowedOrigins: process.env.JARVIS_ALLOWED_ORIGINS,
+  port: PORT,
+});
+// Hunting, memory, and screen-control unlocks use the same origin check as sign-in.
+const requestIsSameOrigin = browserAuth.requestIsSameOrigin;
+// Native macOS client boundary. Separate from browserAuth because the browser gate is bound to a
 // cookie and a same-origin check that Orion.app cannot satisfy; see docs/architecture/desktop-api-contract.md.
 // Unset ORION_DESKTOP_PAIRING_SECRET leaves the whole desktop surface closed.
 const desktopAccess = new DesktopAccess({
@@ -517,34 +516,7 @@ const fail = (res, err, code = 502) =>
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
-app.get("/api/auth/status", (req, res) => {
-  ok(res, { authenticated: appAccess.verify(appAccessToken(req)) });
-});
-
-app.post("/api/auth/login", (req, res) => {
-  if (!requestIsSameOrigin(req)) return fail(res, "Sign-in requires the JARVIS page", 403);
-  try {
-    const session = appAccess.unlock(req.body?.password, req.ip);
-    res.cookie(APP_SESSION_COOKIE, session.token, {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: req.secure,
-      maxAge: Math.max(0, session.expiresAt - Date.now()),
-      path: "/",
-    });
-    ok(res, { authenticated: true });
-  } catch (err) {
-    if (err?.retryAfter) res.set("Retry-After", String(err.retryAfter));
-    fail(res, err, 401);
-  }
-});
-
-app.post("/api/auth/logout", (req, res) => {
-  if (!requestIsSameOrigin(req)) return fail(res, "Sign-out requires the JARVIS page", 403);
-  appAccess.revoke(appAccessToken(req));
-  res.clearCookie(APP_SESSION_COOKIE, { path: "/" });
-  ok(res, { authenticated: false });
-});
+browserAuth.mountRoutes(app);
 
 // Native macOS client surface. Mounted ahead of the browser cookie gate below on purpose:
 // Express matches "/api" as a prefix, so mounting it after would apply the cookie and
@@ -565,10 +537,7 @@ app.use(
   }),
 );
 
-app.use("/api", (req, res, next) => {
-  if (!appAccess.verify(appAccessToken(req))) return fail(res, "Authentication required", 401);
-  next();
-});
+app.use("/api", browserAuth.gate);
 
 const orionPlugins = await loadOrionPlugins({
   paths: parseOrionPluginPaths(process.env.ORION_PLUGIN_PATHS),
@@ -2585,6 +2554,11 @@ function warnIfBoundToEveryInterface(host) {
 }
 
 // The handle is kept so shutdown can close the HTTP server cleanly alongside the plugin runtime.
+// Refuse to serve if the browser API boundary is missing or misordered. A deployment was found
+// running with no gate at all, serving every /api route to anything on the network; this turns
+// that state into a startup failure whose message names the fix.
+browserAuth.assertGateOrder(app, { allowUngated: process.env.ORION_ALLOW_UNGATED_API === "1" });
+
 const httpServer = app.listen(PORT, HOST, () => {
   console.log(`[jarvis-bff] listening on http://${HOST}:${PORT}  (gateway: ${GATEWAY_URL})`);
   warnIfBoundToEveryInterface(HOST);
@@ -3661,16 +3635,6 @@ function cleanOptionalText(value, limit) {
   return text || null;
 }
 
-function requestIsSameOrigin(req) {
-  const origin = req.get("origin");
-  if (!origin) return false;
-  try {
-    const parsed = new URL(origin);
-    return (parsed.protocol === "http:" || parsed.protocol === "https:") && ALLOWED_ORIGINS.has(parsed.origin);
-  } catch {
-    return false;
-  }
-}
 
 function normalizeProviderBInput(body = {}) {
   const destination = String(body.destination ?? "").trim();
@@ -3741,21 +3705,6 @@ function memoryAccessToken(req) {
   return String(req.get("x-jarvis-memory-access") ?? "").trim();
 }
 
-function appAccessToken(req) {
-  const cookies = String(req.get("cookie") ?? "").split(";");
-  for (const cookie of cookies) {
-    const separator = cookie.indexOf("=");
-    if (separator < 0) continue;
-    const name = cookie.slice(0, separator).trim();
-    if (name !== APP_SESSION_COOKIE) continue;
-    try {
-      return decodeURIComponent(cookie.slice(separator + 1).trim());
-    } catch {
-      return "";
-    }
-  }
-  return "";
-}
 
 let shutdownStarted = false;
 
