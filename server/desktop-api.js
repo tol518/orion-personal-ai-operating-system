@@ -11,6 +11,7 @@
 import express from "express";
 import { DesktopAccess, desktopBearerToken } from "./desktop-access.js";
 import { REMOTE_SERVICES, SELF_NODE_ID } from "./remote-access.js";
+import { buildFindings } from "./security-review.js";
 
 // Only these gateway events reach Orion.app. Hunting, extraction, workflow-learning, and memory
 // mutation events belong to features that are out of scope for the native app in V1, so they are
@@ -81,6 +82,8 @@ export function createDesktopApi({
   remoteAccess,
   decorateNodes,
   usageReport,
+  remediator,
+  apiAuthenticated,
 }) {
   const router = express.Router();
 
@@ -280,6 +283,56 @@ export function createDesktopApi({
     } catch (err) {
       fail(res, err);
     }
+  });
+
+  // ---- Security -----------------------------------------------------------
+  // A checklist of what is not yet secure, with the fix attached. The point is that someone who
+  // never reads the documentation still ends up secure, rather than having to know to ask.
+  router.get("/security", async (_req, res) => {
+    if (!remoteAccess) return fail(res, "Security review is not configured", 503);
+    try {
+      const payload = await gateway.request("node.list", {}).catch(() => ({ nodes: [] }));
+      const nodes = (payload?.nodes ?? []).map(toNodeSummary);
+      const [mini, machines, described] = await Promise.all([
+        remoteAccess.describeSelf(),
+        remoteAccess.describeMachines(),
+        remoteAccess.describe(nodes),
+      ]);
+      // Carry each node's name and platform through, so a finding can say which machine it means.
+      const named = described.map((entry) => {
+        const node = nodes.find((candidate) => candidate.id === entry.nodeId);
+        return { ...entry, name: node?.name, platform: node?.platform };
+      });
+      ok(res, {
+        findings: buildFindings({
+          apiAuthenticated: typeof apiAuthenticated === "function" ? Boolean(apiAuthenticated()) : true,
+          mini,
+          nodes: named,
+          machines,
+        }),
+      });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // Applies one known fix to one node. The client names a finding; the command is looked up on
+  // the Mini. Nothing the client sends reaches a shell.
+  router.post("/security/remediate", async (req, res) => {
+    if (!remediator) return fail(res, "Remediation is not configured", 503);
+    const findingId = typeof req.body?.findingId === "string" ? req.body.findingId.trim() : "";
+    const platform = typeof req.body?.platform === "string" ? req.body.platform.trim() : "";
+    if (!findingId) return fail(res, "findingId required", 400);
+    try {
+      ok(res, await remediator.apply({ findingId, platform, clientId: req.desktopClient.clientId }));
+    } catch (err) {
+      fail(res, err, 400);
+    }
+  });
+
+  router.get("/security/audit", (_req, res) => {
+    if (!remediator) return fail(res, "Remediation is not configured", 503);
+    ok(res, { events: remediator.audit() });
   });
 
   // ---- Remote access ------------------------------------------------------

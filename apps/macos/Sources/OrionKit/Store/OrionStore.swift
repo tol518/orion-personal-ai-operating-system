@@ -46,6 +46,17 @@ public final class OrionStore {
     /// Machines configured on the Mini, independent of the gateway's node list.
     public private(set) var remoteMachines: [RemoteMachine] = []
 
+    // MARK: Security
+    public private(set) var findings: [SecurityFinding] = []
+    public private(set) var isLoadingFindings = false
+    public private(set) var securityUnavailable: String?
+    public private(set) var remediatingFindingId: String?
+    /// Set after a fix lands, so the screen can say what happened and how to undo it.
+    public private(set) var lastRemediation: (finding: String, result: RemediationResult)?
+
+    /// Findings the user should act on. The passing checks stay available for the full list.
+    public var openFindings: [SecurityFinding] { findings.filter(\.needsAttention) }
+
     // MARK: Usage
     public private(set) var usage: UsageSummary?
     public private(set) var usageRange = "7d"
@@ -194,6 +205,8 @@ public final class OrionStore {
         remoteAccess = []
         miniRemoteAccess = nil
         remoteMachines = []
+        findings = []
+        lastRemediation = nil
         usage = nil
         messages = []
         selectedSessionKey = nil
@@ -287,6 +300,52 @@ public final class OrionStore {
             usage = nil
             usageUnavailable = error.localizedDescription
         }
+    }
+
+    /// Reads the security checklist. A Mini without the review answers 503, which is a
+    /// configuration state to explain rather than an error to alarm the user with.
+    public func refreshSecurity() async {
+        isLoadingFindings = true
+        defer { isLoadingFindings = false }
+        do {
+            findings = try await client.securityFindings()
+            securityUnavailable = nil
+        } catch let error as OrionClientError {
+            findings = []
+            switch error {
+            case .desktopAPIMissing, .desktopAccessDisabled:
+                securityUnavailable = "This Mini does not run the security review yet."
+            case .server(503, let message):
+                securityUnavailable = message
+            default:
+                securityUnavailable = error.localizedDescription
+            }
+        } catch {
+            findings = []
+            securityUnavailable = error.localizedDescription
+        }
+    }
+
+    /// Applies a fix, then re-reads the checklist so the result is the machine's actual state
+    /// rather than an assumption that the command worked.
+    public func applyRemediation(for finding: SecurityFinding) async {
+        guard let platform = finding.target?.platform, finding.isFixable else { return }
+        remediatingFindingId = finding.id
+        defer { remediatingFindingId = nil }
+        do {
+            let result = try await client.remediate(findingId: finding.id, platform: platform)
+            lastRemediation = (finding: finding.title, result: result)
+            await refreshSecurity()
+        } catch let error as OrionClientError {
+            lastError = error.localizedDescription
+            if error.requiresPairing { handleConnectionFailure(error) }
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    public func dismissRemediationResult() {
+        lastRemediation = nil
     }
 
     public func remoteAccess(for nodeId: String) -> RemoteAccessNode? {
