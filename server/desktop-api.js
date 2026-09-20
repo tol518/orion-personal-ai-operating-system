@@ -291,7 +291,13 @@ export function createDesktopApi({
   router.get("/security", async (_req, res) => {
     if (!remoteAccess) return fail(res, "Security review is not configured", 503);
     try {
-      const payload = await gateway.request("node.list", {}).catch(() => ({ nodes: [] }));
+      // A failure here used to be swallowed into an empty node list, which rendered as a clean
+      // checklist. Track it instead so the findings can admit the gap.
+      let gatewayReachable = true;
+      const payload = await gateway.request("node.list", {}).catch(() => {
+        gatewayReachable = false;
+        return { nodes: [] };
+      });
       const nodes = (payload?.nodes ?? []).map(toNodeSummary);
       const [mini, machines, described] = await Promise.all([
         remoteAccess.describeSelf(),
@@ -309,6 +315,7 @@ export function createDesktopApi({
           mini,
           nodes: named,
           machines,
+          gatewayReachable,
         }),
       });
     } catch (err) {

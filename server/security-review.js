@@ -73,7 +73,13 @@ const SEVERITY_RANK = { critical: 0, warning: 1, info: 2, ok: 3 };
  * @param {Array} input.nodes               paired nodes' remote-access entries
  * @param {Array} input.machines            configured machines' entries
  */
-export function buildFindings({ apiAuthenticated, mini = null, nodes = [], machines = [] } = {}) {
+export function buildFindings({
+  apiAuthenticated,
+  mini = null,
+  nodes = [],
+  machines = [],
+  gatewayReachable = true,
+} = {}) {
   const findings = [];
 
   findings.push(
@@ -120,6 +126,23 @@ export function buildFindings({ apiAuthenticated, mini = null, nodes = [], machi
   for (const { entry, label, platform, nodeId, configuredOnly } of entries) {
     for (const service of entry.services ?? []) {
       const exposure = service.exposure ?? {};
+      // An inspection that failed is not evidence of safety. Saying nothing here would let a
+      // broken netstat read present as a clean checklist, which is the failure mode this whole
+      // screen exists to prevent.
+      if (exposure.bind === "unknown") {
+        findings.push({
+          id: `unchecked:${nodeId}:${service.kind}`,
+          severity: "info",
+          title: `Orion could not check ${service.label} on ${label}`,
+          detail:
+            `Reading which interfaces port ${service.port} is bound to did not succeed, so Orion ` +
+            `cannot say whether it is reachable beyond your tailnet. This is an unverified blind ` +
+            `spot, not a clean result.`,
+          target: { nodeId, kind: service.kind, port: service.port, platform, label },
+          remediation: null,
+        });
+        continue;
+      }
       if (exposure.scope !== "lan") continue;
       const remediation = remediationFor(platform, service.kind);
       findings.push({
@@ -142,6 +165,33 @@ export function buildFindings({ apiAuthenticated, mini = null, nodes = [], machi
           : null,
       });
     }
+  }
+
+  // The same reasoning at the level of whole machines: an empty node list because the gateway
+  // was unreachable looks identical to an empty node list because everything is fine.
+  if (!gatewayReachable) {
+    findings.push({
+      id: "nodes-unreachable",
+      severity: "info",
+      title: "Orion could not check your other machines",
+      detail:
+        "Asking the gateway which machines are paired did not succeed, so nothing below covers " +
+        "them. Any exposed port on another machine would not appear in this list.",
+      target: null,
+      remediation: null,
+    });
+  } else if (nodes.length === 0 && machines.length === 0) {
+    findings.push({
+      id: "no-machines-known",
+      severity: "info",
+      title: "Orion only knows about this Mac mini",
+      detail:
+        "No other machines are paired as nodes or configured by address, so this checklist covers " +
+        "the Mini alone. To include one, set ORION_REMOTE_ACCESS_MACHINES on the Mini as " +
+        "label|host|platform entries, or pair the machine as an Orion node.",
+      target: null,
+      remediation: null,
+    });
   }
 
   return findings.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
