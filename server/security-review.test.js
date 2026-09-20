@@ -23,7 +23,8 @@ test("an ungated API is the most severe finding and sorts first", () => {
 });
 
 test("a gated API reports as ok", () => {
-  const [finding] = buildFindings({ apiAuthenticated: true });
+  // Selected by id, not position: other findings legitimately sort above an "ok" one.
+  const finding = buildFindings({ apiAuthenticated: true }).find((f) => f.id === "api-auth");
   assert.equal(finding.severity, "ok");
   assert.equal(finding.remediation, null);
 });
@@ -210,4 +211,59 @@ test("the audit ring buffer stays bounded", async () => {
     remediator.record({ findingId: "f", nodeId: "n", remediation: "r", clientId: "c", outcome: "applied" });
   }
   assert.equal(remediator.audit().length, 200);
+});
+
+// A checklist that cannot tell "checked and safe" from "could not check" is worse than no
+// checklist, because it converts a blind spot into a green tick. These four cases pin that down.
+
+test("an unreadable bind is reported, not silently treated as safe", () => {
+  const findings = buildFindings({
+    apiAuthenticated: true,
+    nodes: [
+      {
+        nodeId: "node-pc",
+        name: "Windows PC",
+        platform: "windows",
+        services: [rdp({ bind: "unknown", scope: null, fix: null })],
+      },
+    ],
+  });
+  const unchecked = findings.find((f) => f.id === "unchecked:node-pc:remote-desktop");
+  assert.ok(unchecked, "an unknown bind must produce a finding");
+  assert.match(unchecked.title, /could not check/i);
+  assert.equal(unchecked.remediation, null);
+  // It must not masquerade as a confirmed-clean result.
+  assert.notEqual(unchecked.severity, "ok");
+});
+
+test("a service that is genuinely not listening stays silent", () => {
+  const findings = buildFindings({
+    apiAuthenticated: true,
+    nodes: [
+      {
+        nodeId: "node-pc",
+        name: "Windows PC",
+        platform: "windows",
+        services: [rdp({ bind: "not-listening", scope: null, fix: null })],
+      },
+    ],
+  });
+  assert.equal(findings.filter((f) => f.id.startsWith("unchecked:")).length, 0);
+  assert.equal(findings.filter((f) => f.id.startsWith("exposure:")).length, 0);
+});
+
+test("an unreachable gateway is admitted rather than rendering as a clean list", () => {
+  const findings = buildFindings({ apiAuthenticated: true, gatewayReachable: false });
+  const gap = findings.find((f) => f.id === "nodes-unreachable");
+  assert.ok(gap, "a failed node enumeration must be visible");
+  assert.match(gap.detail, /would not appear/i);
+  // The false-negative case: it must not be the only-green outcome we shipped.
+  assert.notEqual(findings.every((f) => f.severity === "ok"), true);
+});
+
+test("knowing about no other machines says so, and names how to add one", () => {
+  const findings = buildFindings({ apiAuthenticated: true, mini: { nodeId: "orion-mini", services: [] } });
+  const only = findings.find((f) => f.id === "no-machines-known");
+  assert.ok(only, "a checklist covering only the Mini must say so");
+  assert.match(only.detail, /ORION_REMOTE_ACCESS_MACHINES/);
 });
