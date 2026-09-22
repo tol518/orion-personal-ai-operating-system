@@ -10,6 +10,8 @@ INTENTS_DIR := build/appintents
 
 # App Intents metadata inputs. Xcode generates these as part of a normal build; with SwiftPM they
 # have to be produced explicitly, or Siri and Shortcuts never discover the intents.
+# SwiftPM moved the built .swiftmodule from <bin-path>/Modules to <bin-path> itself, so both
+# are searched below rather than pinning either layout.
 TOOLCHAIN := $(shell xcode-select -p)/Toolchains/XcodeDefault.xctoolchain
 PROCESSOR := $(TOOLCHAIN)/usr/bin/appintentsmetadataprocessor
 SDK := $(shell xcrun --show-sdk-path)
@@ -43,7 +45,7 @@ appintents: build
 		echo "         Install the full Xcode and run: sudo xcode-select -s /Applications/Xcode.app"; \
 	else \
 		swiftc -c -wmo -parse-as-library -module-name OrionApp \
-			-target $(TARGET_TRIPLE) -sdk "$(SDK)" -I "$(BUILD_DIR)/Modules" \
+			-target $(TARGET_TRIPLE) -sdk "$(SDK)" -I "$(BUILD_DIR)" -I "$(BUILD_DIR)/Modules" \
 			-emit-const-values-path $(INTENTS_DIR)/OrionApp.swiftconstvalues \
 			-Xfrontend -const-gather-protocols-file -Xfrontend $(INTENTS_DIR)/protocols.json \
 			-o $(INTENTS_DIR)/OrionApp.o \
@@ -64,6 +66,14 @@ appintents: build
 			--force > /dev/null 2>&1 && \
 		echo "App Intents metadata written to $(APP)/Contents/Resources/Metadata.appintents" || \
 		echo "warning: App Intents metadata extraction failed — Siri will not see Orion's intents."; \
+	fi
+	@# The step above is deliberately non-fatal, so verify the artifact rather than the exit code:
+	@# a build that quietly ships without Siri support is the failure this check exists to catch.
+	@if [ ! -s "$(APP)/Contents/Resources/Metadata.appintents/extract.actionsdata" ]; then \
+		echo ""; \
+		echo "  !!  Orion.app has NO App Intents metadata. Siri will not see its intents."; \
+		echo "      The app is otherwise fine; re-run 'make appintents' after fixing the cause."; \
+		echo ""; \
 	fi
 
 # Compile the icon set into an .icns.

@@ -15,7 +15,8 @@ struct CheckOrionStatusIntent: AppIntent {
     static let title: LocalizedStringResource = "Check Orion Status"
     static let description = IntentDescription(
         "Reports whether the Mini and the OpenClaw gateway are reachable.",
-        categoryName: "Status"
+        categoryName: "Status",
+        searchKeywords: ["status", "health", "connected", "online", "reachable", "gateway", "mini"]
     )
     /// Runs in the background: asking whether something is up should not steal focus.
     static let openAppWhenRun = false
@@ -30,7 +31,8 @@ struct SendToOrionIntent: AppIntent {
     static let title: LocalizedStringResource = "Send a Message to Orion"
     static let description = IntentDescription(
         "Sends a message to an Orion agent and speaks the reply if it arrives quickly. The run continues on the Mini either way.",
-        categoryName: "Chat"
+        categoryName: "Chat",
+        searchKeywords: ["delegate", "task", "ask", "agent", "run", "assign", "chat", "message"]
     )
     static let openAppWhenRun = false
 
@@ -68,7 +70,8 @@ struct CheckOrionUsageIntent: AppIntent {
     static let title: LocalizedStringResource = "Check Orion Usage"
     static let description = IntentDescription(
         "Reports token spend and the Codex weekly allowance.",
-        categoryName: "Usage"
+        categoryName: "Usage",
+        searchKeywords: ["usage", "tokens", "spend", "cost", "budget", "consumption"]
     )
     static let openAppWhenRun = false
 
@@ -82,7 +85,8 @@ struct CheckCodexAllowanceIntent: AppIntent {
     static let title: LocalizedStringResource = "Check Codex Allowance"
     static let description = IntentDescription(
         "Reports how much of the Codex weekly allowance is left.",
-        categoryName: "Usage"
+        categoryName: "Usage",
+        searchKeywords: ["codex", "allowance", "quota", "limit", "remaining", "weekly"]
     )
     static let openAppWhenRun = false
 
@@ -94,7 +98,11 @@ struct CheckCodexAllowanceIntent: AppIntent {
 
 struct OpenOrionIntent: AppIntent {
     static let title: LocalizedStringResource = "Open Orion"
-    static let description = IntentDescription("Brings the Orion window to the front.", categoryName: "Status")
+    static let description = IntentDescription(
+        "Brings the Orion window to the front.",
+        categoryName: "Status",
+        searchKeywords: ["open", "launch", "show", "window", "front"]
+    )
     static let openAppWhenRun = true
 
     func perform() async throws -> some IntentResult {
@@ -123,12 +131,17 @@ struct OrionShortcuts: AppShortcutsProvider {
         )
         AppShortcut(
             intent: SendToOrionIntent(),
+            // Siri cannot bind free-form text from a shortcut phrase — a phrase parameter has to be
+            // an AppEnum or AppEntity — so these are all bare openers and the message is dictated
+            // at the follow-up prompt. "Message Orion" is gone because the messaging domain claims
+            // it and answers with a contact lookup, which reads as Orion being broken rather than
+            // as Siri having chosen a different app.
             phrases: [
                 "Ask \(.applicationName)",
+                "Delegate to \(.applicationName)",
                 "Tell \(.applicationName)",
-                "Message \(.applicationName)",
             ],
-            shortTitle: "Message Orion",
+            shortTitle: "Delegate to Orion",
             systemImageName: "bubble.left.and.bubble.right"
         )
         AppShortcut(
