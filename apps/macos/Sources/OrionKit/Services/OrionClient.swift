@@ -148,8 +148,9 @@ public actor OrionClient {
     }
 
     public func hasStoredToken() -> Bool {
-        guard let token = try? storedToken() else { return false }
-        return token != nil
+        // `try?` flattens the nested optional, so this is nil both when the read throws and when
+        // no token is stored.
+        (try? storedToken()) != nil
     }
 
     public func forgetPairing() throws {
