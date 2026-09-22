@@ -123,12 +123,17 @@ struct OrionShortcuts: AppShortcutsProvider {
         )
         AppShortcut(
             intent: SendToOrionIntent(),
+            // Siri cannot bind free-form text from a shortcut phrase — a phrase parameter has to be
+            // an AppEnum or AppEntity — so these are all bare openers and the message is dictated
+            // at the follow-up prompt. "Message Orion" is gone because the messaging domain claims
+            // it and answers with a contact lookup, which reads as Orion being broken rather than
+            // as Siri having chosen a different app.
             phrases: [
                 "Ask \(.applicationName)",
+                "Delegate to \(.applicationName)",
                 "Tell \(.applicationName)",
-                "Message \(.applicationName)",
             ],
-            shortTitle: "Message Orion",
+            shortTitle: "Delegate to Orion",
             systemImageName: "bubble.left.and.bubble.right"
         )
         AppShortcut(
