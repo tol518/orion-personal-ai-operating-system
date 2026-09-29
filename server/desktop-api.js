@@ -84,6 +84,7 @@ export function createDesktopApi({
   usageReport,
   remediator,
   apiAuthenticated,
+  tailnet,
 }) {
   const router = express.Router();
 
@@ -316,6 +317,7 @@ export function createDesktopApi({
           nodes: named,
           machines,
           gatewayReachable,
+          tailnetExposure: tailnet ? await tailnet.exposure() : undefined,
         }),
       });
     } catch (err) {
@@ -334,6 +336,22 @@ export function createDesktopApi({
       ok(res, await remediator.apply({ findingId, platform, clientId: req.desktopClient.clientId }));
     } catch (err) {
       fail(res, err, 400);
+    }
+  });
+
+  // Writes a least-privilege tailnet policy for the user to paste into the Tailscale admin console.
+  // Nothing is applied: that would take a key able to rewrite access for the whole tailnet. The
+  // client sends its own tailnet addresses so the device it runs on is never left out.
+  router.post("/security/tailnet-policy", async (req, res) => {
+    if (!tailnet) return fail(res, "Tailnet policy is not configured", 503);
+    const requesterAddresses = Array.isArray(req.body?.addresses)
+      ? req.body.addresses.filter((value) => typeof value === "string")
+      : [];
+    try {
+      const nodes = await listNodes().catch(() => []);
+      ok(res, await tailnet.policy({ nodes, machines: remoteAccess?.machines ?? [], requesterAddresses }));
+    } catch (err) {
+      fail(res, err);
     }
   });
 

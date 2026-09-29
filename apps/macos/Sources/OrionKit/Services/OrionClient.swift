@@ -238,6 +238,16 @@ public actor OrionClient {
         )
     }
 
+    /// Asks the Mini to write a least-privilege tailnet policy. Nothing is applied.
+    ///
+    /// `addresses` are this Mac's own tailnet addresses, so the policy never leaves it out.
+    public func tailnetPolicy(addresses: [String]) async throws -> TailnetPolicy {
+        struct Body: Encodable {
+            let addresses: [String]
+        }
+        return try await send("security/tailnet-policy", method: "POST", body: Body(addresses: addresses))
+    }
+
     /// Which native remote-desktop services the Mini can see, for itself and for each node.
     ///
     /// The Mini's own entry gets the connected address as a fallback, so a Mini that cannot read

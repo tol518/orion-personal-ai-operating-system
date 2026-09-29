@@ -14,7 +14,8 @@ import { DesktopAccess } from "./desktop-access.js";
 import { createDesktopApi, desktopEventFrame } from "./desktop-api.js";
 import { RemoteAccessDirectory } from "./remote-access.js";
 import { SecurityRemediator } from "./security-review.js";
-import { createNodeBindInspector, inspectLocalBinds } from "./exposure.js";
+import { createNodeBindInspector, inspectLocalBinds, isLoopback } from "./exposure.js";
+import { TailnetInspector } from "./tailnet-policy.js";
 import {
   addUsageTotals,
   buildUsageAttribution,
@@ -536,6 +537,12 @@ app.use(
     remediator: new SecurityRemediator({ gateway }),
     // Reported so the security checklist can say whether the browser API is gated at all.
     apiAuthenticated: () => browserAuth.configured,
+    tailnet: new TailnetInspector({
+      // A loopback-bound BFF is published through Tailscale Serve on 443; otherwise clients dial PORT.
+      orionPort: isLoopback(HOST) ? 443 : PORT,
+      // Nodes dial the gateway on the Mini's tailnet address at the port it listens on locally.
+      gatewayPort: Number(new URL(GATEWAY_URL).port) || 18789,
+    }),
     usageReport: buildUsageReport,
     decorateNodes: (payload) => windowsScreen.decorateNodeList(payload),
   }),
