@@ -8,6 +8,7 @@ import SwiftUI
 struct SecurityView: View {
     @Bindable var store: OrionStore
     @State private var confirming: SecurityFinding?
+    @State private var showingTailnetPolicy = false
 
     var body: some View {
         ScrollView {
@@ -25,7 +26,8 @@ struct SecurityView: View {
                         FindingRow(
                             finding: finding,
                             isApplying: store.remediatingFindingId == finding.id,
-                            onFix: { confirming = finding }
+                            onFix: { confirming = finding },
+                            onShowPolicy: { showingTailnetPolicy = true }
                         )
                     }
                 }
@@ -42,6 +44,9 @@ struct SecurityView: View {
         }
         .task {
             if store.findings.isEmpty { await store.refreshSecurity() }
+        }
+        .sheet(isPresented: $showingTailnetPolicy, onDismiss: { store.dismissTailnetPolicy() }) {
+            TailnetPolicySheet(store: store)
         }
         // The command is shown before it runs, never after.
         .confirmationDialog(
@@ -124,6 +129,7 @@ struct FindingRow: View {
     let finding: SecurityFinding
     let isApplying: Bool
     let onFix: () -> Void
+    let onShowPolicy: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -141,7 +147,17 @@ struct FindingRow: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let remediation = finding.remediation {
-                    if finding.isFixable {
+                    if finding.offersTailnetPolicy {
+                        Text(remediation.summary)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button(action: onShowPolicy) {
+                            Label("Show policy", systemImage: "doc.text.magnifyingglass")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    } else if finding.isFixable {
                         Button(action: onFix) {
                             if isApplying {
                                 HStack(spacing: 6) {

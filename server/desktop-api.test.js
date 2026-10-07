@@ -3,6 +3,7 @@ import test from "node:test";
 import express from "express";
 import { DesktopAccess } from "./desktop-access.js";
 import { RemoteAccessDirectory } from "./remote-access.js";
+import { TailnetPolicyError } from "./tailnet-policy.js";
 import {
   createDesktopApi,
   toUsageSummary,
@@ -718,4 +719,91 @@ test("a client can be revoked by id from the desktop surface", async (t) => {
     headers: authed(first.body.token),
   });
   assert.equal(missing.status, 404);
+});
+
+// ---- Tailnet policy -------------------------------------------------------------------------
+
+const jsonAuthed = (token) => ({ ...authed(token), "Content-Type": "application/json" });
+
+test("the security checklist includes the tailnet finding when an inspector is wired", async (t) => {
+  const app = await boot({
+    gateway: fakeGateway({ "node.list": () => ({ nodes: [] }) }),
+    deps: {
+      tailnet: { exposure: async () => [{ port: 18789, label: "the OpenClaw gateway", reachableFrom: "tailnet" }] },
+    },
+  });
+  t.after(() => app.close());
+  const { token } = (await pairToken(app.base)).body;
+
+  const response = await fetch(`${app.base}/security`, { headers: authed(token) });
+  assert.equal(response.status, 200);
+  const open = (await response.json()).findings.find((finding) => finding.id === "tailnet-open");
+  assert.ok(open, "an allow-all tailnet must appear on the checklist");
+  assert.equal(open.remediation.id, "restrict-tailnet-policy");
+  assert.equal(open.remediation.automatic, false);
+});
+
+test("the tailnet policy route needs a token, is 503 without an inspector, and passes only string addresses", async (t) => {
+  const bare = await boot();
+  t.after(() => bare.close());
+  const anonymous = await fetch(`${bare.base}/security/tailnet-policy`, { method: "POST" });
+  assert.equal(anonymous.status, 401);
+  const bareToken = (await pairToken(bare.base)).body.token;
+  const missing = await fetch(`${bare.base}/security/tailnet-policy`, {
+    method: "POST",
+    headers: jsonAuthed(bareToken),
+    body: "{}",
+  });
+  assert.equal(missing.status, 503);
+
+  const seen = [];
+  const app = await boot({
+    gateway: fakeGateway({
+      "node.list": () => ({ nodes: [{ nodeId: "pc", displayName: "PC", platform: "windows" }] }),
+    }),
+    deps: {
+      tailnet: {
+        exposure: async () => null,
+        policy: async (input) => {
+          seen.push(input);
+          return { policy: "// generated", requesterIdentified: true, clients: ["macbook"], excluded: [], generatedAt: "now" };
+        },
+      },
+    },
+  });
+  t.after(() => app.close());
+  const { token } = (await pairToken(app.base)).body;
+  const response = await fetch(`${app.base}/security/tailnet-policy`, {
+    method: "POST",
+    headers: jsonAuthed(token),
+    body: JSON.stringify({ addresses: ["100.64.0.2", 7, { evil: true }] }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).policy, "// generated");
+  assert.deepEqual(seen[0].requesterAddresses, ["100.64.0.2"]);
+  assert.equal(seen[0].nodes[0].id, "pc");
+  assert.deepEqual(seen[0].machines, []);
+});
+
+test("a policy the generator refuses to write surfaces its status and reason", async (t) => {
+  const app = await boot({
+    gateway: fakeGateway({ "node.list": () => ({ nodes: [] }) }),
+    deps: {
+      tailnet: {
+        exposure: async () => null,
+        policy: async () => {
+          throw new TailnetPolicyError("Orion found none of your own devices on the tailnet");
+        },
+      },
+    },
+  });
+  t.after(() => app.close());
+  const { token } = (await pairToken(app.base)).body;
+  const response = await fetch(`${app.base}/security/tailnet-policy`, {
+    method: "POST",
+    headers: jsonAuthed(token),
+    body: "{}",
+  });
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).error, /none of your own devices/);
 });

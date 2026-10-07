@@ -48,9 +48,36 @@ public struct SecurityFinding: Decodable, Sendable, Identifiable, Equatable {
 
     /// Something the user should act on, as opposed to a passing check.
     public var needsAttention: Bool { severity != .ok }
+
+    /// The fix is a tailnet policy Orion writes and the user saves in the Tailscale admin console.
+    public var offersTailnetPolicy: Bool { remediation?.id == Self.tailnetPolicyRemediationId }
+
+    static let tailnetPolicyRemediationId = "restrict-tailnet-policy"
 }
 
 struct SecurityResponse: Decodable { let findings: [SecurityFinding] }
+
+/// A least-privilege tailnet policy the Mini wrote from the devices it can see.
+///
+/// Orion never applies it: that would take a key able to rewrite access for every device on the
+/// tailnet. The user pastes it into the admin console, where its embedded tests make Tailscale
+/// refuse it if it would cut off anything Orion needs.
+public struct TailnetPolicy: Decodable, Sendable, Equatable {
+    public struct Excluded: Decodable, Sendable, Equatable {
+        public let name: String
+        public let reason: String
+    }
+
+    /// HuJSON, ready to paste.
+    public let policy: String
+    /// False when the Mini could not match this Mac to a tailnet device, so the user should check
+    /// it appears as a client before saving.
+    public let requesterIdentified: Bool
+    public let clients: [String]
+    /// Devices that lose all access when the policy is saved.
+    public let excluded: [Excluded]
+    public let generatedAt: String
+}
 
 /// What came back from applying a fix.
 public struct RemediationResult: Decodable, Sendable {

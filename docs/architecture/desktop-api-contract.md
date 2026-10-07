@@ -169,6 +169,7 @@ BFF does not run firewall commands.
 | `GET /api/v1/desktop/security` | Findings, worst first: whether the browser API is gated, and every service answering beyond the tailnet. |
 | `POST /api/v1/desktop/security/remediate` | Applies one known fix to one node. |
 | `GET /api/v1/desktop/security/audit` | Actor, finding, node, outcome. |
+| `POST /api/v1/desktop/security/tailnet-policy` | Writes a least-privilege tailnet policy for the user to save. Applies nothing. |
 
 The point is that a user who never reads documentation still ends up secure: the app says what
 is wrong and offers to fix it, rather than leaving them to know a question needs asking.
@@ -184,6 +185,33 @@ a button that does nothing.
 
 Applying reads the setting back from the machine afterwards rather than trusting the exit code,
 and records an audit event carrying actor, finding, node, and outcome — never command output.
+
+#### Tailnet policy
+
+The checklist reads the packet filter the Mini's own `tailscaled` enforces (`tailscale debug
+netmap`, the compiled `PacketFilter`) and reports whether any source wider than a single device can
+reach Orion, the gateway, Screen Sharing, or Apple Remote Desktop. No Tailscale credential is
+involved. Three outcomes: `tailnet-open` (warning), `tailnet-restricted` (ok), and
+`tailnet-unchecked` (info) when the filter cannot be read — `debug` output is not a stable
+interface, so a failed read is a blind spot, never a clean result.
+
+`POST /security/tailnet-policy` takes `{ addresses: [string] }`, the requesting Mac's own tailnet
+addresses, and returns `{ policy, requesterIdentified, clients, excluded, generatedAt }`. The
+policy is HuJSON built from the Mini's tailnet status, the gateway's node list, and configured
+machines:
+
+- your own untagged devices seen in the last 30 days reach Orion and remote desktop; phones reach
+  Orion only
+- OpenClaw nodes reach the gateway; the Mini reaches remote-desktop ports to probe them
+- every device is listed by both addresses, since a host alias is one IP and MagicDNS hands out both
+- the requesting device is always kept as a client, even if it is also a node
+- embedded `tests` assert every permitted path and the ones being closed, so Tailscale refuses the
+  policy on save if it would cut off anything Orion needs
+
+It is never applied by Orion. Saving a policy takes a key that can rewrite access for every device
+on the tailnet, including ones Orion has nothing to do with. `409` when none of the user's own
+devices are visible, since any policy would lock them out; `503` when the tailnet status cannot be
+read.
 
 ## Deliberate omissions in V1
 

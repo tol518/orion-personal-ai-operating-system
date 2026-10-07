@@ -53,6 +53,9 @@ public final class OrionStore {
     public private(set) var remediatingFindingId: String?
     /// Set after a fix lands, so the screen can say what happened and how to undo it.
     public private(set) var lastRemediation: (finding: String, result: RemediationResult)?
+    public private(set) var tailnetPolicy: TailnetPolicy?
+    public private(set) var isLoadingTailnetPolicy = false
+    public private(set) var tailnetPolicyError: String?
 
     /// Findings the user should act on. The passing checks stay available for the full list.
     public var openFindings: [SecurityFinding] { findings.filter(\.needsAttention) }
@@ -207,6 +210,8 @@ public final class OrionStore {
         remoteMachines = []
         findings = []
         lastRemediation = nil
+        tailnetPolicy = nil
+        tailnetPolicyError = nil
         usage = nil
         messages = []
         selectedSessionKey = nil
@@ -346,6 +351,34 @@ public final class OrionStore {
 
     public func dismissRemediationResult() {
         lastRemediation = nil
+    }
+
+    /// The Tailscale admin page where a policy is saved. Fixed, never taken from the server.
+    public static let tailnetAccessControlsURL = URL(string: "https://login.tailscale.com/admin/acls")!
+
+    /// Asks the Mini to write a tailnet policy for this Mac's tailnet.
+    public func loadTailnetPolicy(addresses: [String] = TailnetAddresses.current()) async {
+        isLoadingTailnetPolicy = true
+        tailnetPolicyError = nil
+        defer { isLoadingTailnetPolicy = false }
+        do {
+            tailnetPolicy = try await client.tailnetPolicy(addresses: addresses)
+        } catch let error as OrionClientError {
+            tailnetPolicyError = error.localizedDescription
+            if error.requiresPairing { handleConnectionFailure(error) }
+        } catch {
+            tailnetPolicyError = error.localizedDescription
+        }
+    }
+
+    public func dismissTailnetPolicy() {
+        tailnetPolicy = nil
+        tailnetPolicyError = nil
+    }
+
+    @discardableResult
+    public func openTailnetAccessControls() -> Bool {
+        opener(Self.tailnetAccessControlsURL)
     }
 
     public func remoteAccess(for nodeId: String) -> RemoteAccessNode? {

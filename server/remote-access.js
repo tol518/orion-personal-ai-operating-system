@@ -366,7 +366,7 @@ function normalizeName(value) {
 
 /** Reads tailnet peers, including this host, as `{ shortName, dnsName }`. */
 export async function listTailnetPeers() {
-  const binary = await firstExistingBinary();
+  const binary = await findTailscaleBinary();
   if (!binary) return [];
   const { stdout } = await execFileAsync(binary, ["status", "--json"], { timeout: 5_000 });
   const status = JSON.parse(stdout);
@@ -384,7 +384,8 @@ export async function listTailnetPeers() {
     .filter((peer) => peer.dnsName);
 }
 
-async function firstExistingBinary() {
+/** The first Tailscale CLI present on this machine, or null. */
+export async function findTailscaleBinary() {
   const { access } = await import("node:fs/promises");
   for (const candidate of TAILSCALE_BINARIES) {
     try {

@@ -14,6 +14,7 @@
 //   Applying is consented and audited. Each application records actor, finding, node, and outcome.
 //   That is the contract the plan requires before Orion takes any high-risk device action.
 import { randomUUID } from "node:crypto";
+import { tailnetFindings } from "./tailnet-policy.js";
 
 const MAX_AUDIT_EVENTS = 200;
 
@@ -59,6 +60,23 @@ export const REMEDIATIONS = Object.freeze({
     rollback: null,
     verify: null,
   },
+  // Deliberately not automatic. Applying a tailnet policy takes a key that can rewrite access for
+  // every device on the tailnet, not only Orion's; Orion writes the policy and the user saves it.
+  "restrict-tailnet-policy": {
+    id: "restrict-tailnet-policy",
+    title: "Limit which devices can reach what on your tailnet",
+    summary:
+      "Orion has written an access policy from the devices it knows: your own devices reach Orion " +
+      "and remote desktop, phones reach Orion only, nodes reach the gateway, and nothing else is " +
+      "allowed. Paste it into the Tailscale admin console under Access controls. Its built-in tests " +
+      "make Tailscale refuse it if it would cut off anything Orion needs.",
+    platform: "tailnet",
+    automatic: false,
+    shell: null,
+    command: null,
+    rollback: null,
+    verify: null,
+  },
 });
 
 /** Severity ordering for presentation: the worst thing first. */
@@ -79,6 +97,8 @@ export function buildFindings({
   nodes = [],
   machines = [],
   gatewayReachable = true,
+  // Undefined when no tailnet inspector is wired; null when it ran and could not read the policy.
+  tailnetExposure,
 } = {}) {
   const findings = [];
 
@@ -192,6 +212,10 @@ export function buildFindings({
       target: null,
       remediation: null,
     });
+  }
+
+  if (tailnetExposure !== undefined) {
+    findings.push(...tailnetFindings(tailnetExposure, publicRemediation(REMEDIATIONS["restrict-tailnet-policy"])));
   }
 
   return findings.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
