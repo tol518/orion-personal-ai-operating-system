@@ -12,9 +12,17 @@ paired OpenClaw Node hosts running macOS or Linux, connected to the gateway, adv
 and have `node` and Python 3.8+ available. macOS uses `/usr/bin/python3`; Linux uses `python3`
 on the host's executable search path. Python must support descriptor-relative opens, non-following
 stat, descriptor directory scans, and positioned reads. Missing capabilities fail closed. Windows
-sharing is not available until an equivalent native handle-based backend is implemented and tested;
+and WSL file sharing are not available until an equivalent native Windows handle-based backend is implemented and tested;
 there is no less-safe fallback. Existing node execution policy still applies; Orion
 does not approve commands or weaken that policy automatically.
+
+WSL reports itself as Linux, but its mounted Windows filesystem does not preserve the directory
+descriptor invariant required by this backend during Windows-junction replacement. The worker
+therefore refuses all WSL file operations, including roots and metadata, rather than guessing
+which mounts are safe or silently following mounted Windows paths. Do not configure `/mnt/c`
+shares as a workaround. Windows and WSL users can still browse and download files from other
+supported computers through the web dashboard; sharing their own Windows folders requires the
+separate native Windows backend.
 
 Pairing Orion.app to the server makes the Mac a client. To share that Mac's own folders back
 through Orion, also connect an OpenClaw Node host on it. A remote desktop address alone does

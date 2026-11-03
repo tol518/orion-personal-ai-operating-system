@@ -79,6 +79,10 @@ def operate(request):
             or os.stat not in os.supports_follow_symlinks or os.scandir not in os.supports_fd
             or not all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_DIRECTORY", "O_CLOEXEC", "O_NONBLOCK", "pread", "O_SEARCH" if sys.platform == "darwin" else "O_PATH"))):
         raise FileAccessError("This device lacks hardened filesystem support.", 501)
+    if "microsoft" in os.uname().release.lower():
+        # DrvFS can re-resolve a renamed directory descriptor by pathname. The normal
+        # openat/no-follow proof therefore does not apply to Windows junction races.
+        raise FileAccessError("WSL file sharing is disabled until a native Windows handle-based backend is available. Browsing other computers from Windows still works.", 501)
     configured = request.get("roots")
     if configured is None:
         names = ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Movies" if sys.platform == "darwin" else "Videos"]

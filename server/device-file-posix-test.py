@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("worker", Path(__file__).with_name("device-file-posix.py"))
@@ -118,6 +119,12 @@ class BoundaryTests(unittest.TestCase):
             self.assertEqual(worker.respond(self.request("read"))["statusCode"], 501)
         with patch.object(worker.sys, "platform", "win32"):
             self.assertEqual(worker.respond(self.request("read"))["statusCode"], 501)
+        for release in ("4.4.0-19041-Microsoft", "6.6.87.2-microsoft-standard-WSL2"):
+            with patch.object(worker.os, "uname", return_value=SimpleNamespace(release=release)):
+                for operation in ("roots", "list", "stat", "read"):
+                    result = worker.respond(self.request(operation))
+                    self.assertEqual(result["statusCode"], 501)
+                    self.assertIn("WSL file sharing is disabled", result["error"])
 
     def test_configured_root_and_ancestor_links_are_refused(self):
         alias = self.base / "alias"
