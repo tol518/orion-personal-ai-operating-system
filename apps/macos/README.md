@@ -76,6 +76,7 @@ The app shows the client id it will pair as; that is the value for
 | Agents | Existing agents and their available models; start a session |
 | Chat | Session list, transcript, streamed replies, failure state |
 | Nodes | Status and capabilities per paired node, plus one-click remote desktop |
+| Files | Shared folders on the Orion server and connected Node hosts, Quick Look previews, and downloads through a Save dialog |
 | Usage | Token spend by agent and the Codex weekly allowance |
 | Security | What is not yet secure, with a one-click fix where Orion has one, and a tailnet access policy to paste into the Tailscale admin console |
 | Settings | Address, pairing, notifications, and what this app can reach |
@@ -130,10 +131,16 @@ when. No credential and no screen content is in that record.
 
 ## Not in this release
 
-Extraction, Hunting, Finance Lab, workflow learning, broker controls, terminal execution, file
-browsing, screen control, and remote desktop. These still run on the Mini; they are simply not
+Extraction, Hunting, Finance Lab, workflow learning, broker controls, arbitrary terminal execution,
+and screen control. These still run on the Mini; they are simply not
 reachable from this app. Each needs its own authorization contract and audit trail before a
 native surface is appropriate — a node being online is not permission to drive it.
+
+Files is now a separate read-only surface, limited to server-owned shared roots and existing node
+execution permission. The app is a file client; sharing this Mac's own folders also requires a
+paired OpenClaw Node host on this Mac. Quick Look uses temporary local files and removes them
+after use. See [Files across devices](../../docs/device-files.md) for setup, privacy, transport,
+and preview limits. This addition does not enable any excluded feature above.
 
 App Intents, a global command panel, push-to-talk, and context sources (selected text, clipboard,
 screen) are also deliberately absent: the plan orders them after the core flow is stable, and each

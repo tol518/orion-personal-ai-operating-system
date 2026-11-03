@@ -9,6 +9,8 @@ import { createHash, randomUUID } from "node:crypto";
 import express from "express";
 import dotenv from "dotenv";
 import { GatewayClient } from "./gateway.js";
+import { DeviceFiles, parseFileRoots } from "./device-files.js";
+import { createDeviceFilesApi } from "./device-files-api.js";
 import { loadOrionPlugins, parseOrionPluginPaths } from "./orion-plugin-runtime.js";
 import { DesktopAccess } from "./desktop-access.js";
 import { createDesktopApi, desktopEventFrame } from "./desktop-api.js";
@@ -190,6 +192,7 @@ if (!process.env.MEMORY_ACCESS_PASSWORD) {
 }
 
 const gateway = new GatewayClient({ url: GATEWAY_URL, token: GATEWAY_TOKEN });
+const deviceFiles = new DeviceFiles({ gateway, roots: parseFileRoots(process.env.ORION_FILE_ROOTS_JSON) });
 gateway.start();
 const windowsScreen = new WindowsScreenBridge({
   url: process.env.WINDOWS_SCREEN_BRIDGE_URL,
@@ -528,6 +531,7 @@ app.use(
   "/api/v1/desktop",
   createDesktopApi({
     gateway,
+    files: deviceFiles,
     access: desktopAccess,
     submitChatTurn,
     chatHistory: readChatHistory,
@@ -549,6 +553,7 @@ app.use(
 );
 
 app.use("/api", browserAuth.gate);
+app.use("/api/files", createDeviceFilesApi({ files: deviceFiles }));
 
 const orionPlugins = await loadOrionPlugins({
   paths: parseOrionPluginPaths(process.env.ORION_PLUGIN_PATHS),

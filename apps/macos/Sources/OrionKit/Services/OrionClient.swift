@@ -52,6 +52,7 @@ public enum OrionClientError: LocalizedError, Equatable {
 /// only component allowed to talk to OpenClaw.
 public actor OrionClient {
     private let session: URLSession
+    private let fileTransferSession: URLSession
     private let credentials: CredentialStore
     private let decoder: JSONDecoder
     private let encoder = JSONEncoder()
@@ -69,6 +70,7 @@ public actor OrionClient {
         self.credentials = credentials
         if let session {
             self.session = session
+            self.fileTransferSession = session
         } else {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.timeoutIntervalForRequest = 20
@@ -79,6 +81,11 @@ public actor OrionClient {
             // A hard ceiling regardless of activity, so nothing can wait forever.
             configuration.timeoutIntervalForResource = 60
             self.session = URLSession(configuration: configuration)
+            let transferConfiguration = URLSessionConfiguration.ephemeral
+            transferConfiguration.timeoutIntervalForRequest = 45
+            transferConfiguration.timeoutIntervalForResource = 24 * 60 * 60
+            transferConfiguration.waitsForConnectivity = false
+            self.fileTransferSession = URLSession(configuration: transferConfiguration)
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
@@ -211,6 +218,58 @@ public actor OrionClient {
     public func nodes() async throws -> [DesktopNode] {
         let response: NodesResponse = try await send("nodes")
         return response.nodes
+    }
+
+    // MARK: - Shared device files
+
+    public func fileDevices() async throws -> [FileDevice] {
+        let response: FileDevicesResponse = try await send("files/devices")
+        return response.devices
+    }
+
+    public func fileRoots(deviceId: String) async throws -> [FileRoot] {
+        let response: FileRootsResponse = try await send(DeviceFileRequest.path(deviceId: deviceId, action: "roots"))
+        return response.roots
+    }
+
+    public func fileList(deviceId: String, root: String, path: String, offset: Int = 0) async throws -> FileListing {
+        try await send(DeviceFileRequest.path(deviceId: deviceId, action: "list", root: root, path: path, offset: offset))
+    }
+
+    public func fileInfo(deviceId: String, root: String, path: String, revision: String) async throws -> DeviceFileInfo {
+        try await send(DeviceFileRequest.path(deviceId: deviceId, action: "stat", root: root, path: path, revision: revision))
+    }
+
+    /// URLSession streams to disk. Only this explicit preview/download receives file bytes.
+    /// The caller owns the returned temporary file and must delete it after use.
+    public func downloadFile(deviceId: String, root: String, path: String, info: DeviceFileInfo, preview: Bool) async throws -> URL {
+        let filePath = DeviceFileRequest.path(deviceId: deviceId, action: "content", root: root, path: path, revision: info.revision, preview: preview)
+        var request = try authorizedRequest(path: filePath, method: "GET", authenticated: true)
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 45
+        let (temporary, response) = try await fileTransferSession.download(for: request)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try Task.checkCancellation()
+        guard let http = response as? HTTPURLResponse else { throw OrionClientError.transport("invalid file response") }
+        guard (200..<300).contains(http.statusCode) else {
+            let handle = try FileHandle(forReadingFrom: temporary)
+            defer { try? handle.close() }
+            throw Self.mapFailure(status: http.statusCode, headers: http, data: try handle.read(upToCount: 65536) ?? Data())
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("orion-file-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let safeName = URL(fileURLWithPath: info.name).lastPathComponent
+        // Text, HTML, SVG and scripts are always Quick Looked as inert text.
+        let name = preview && info.previewKind == "text" ? "\(safeName).txt" : safeName
+        let destination = directory.appendingPathComponent(name)
+        do {
+            try FileManager.default.moveItem(at: temporary, to: destination)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
+            return destination
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
     }
 
     /// Token and cost usage over a range such as "7d" or "30d".
@@ -413,8 +472,16 @@ public actor OrionClient {
             let retryAfter = headers.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)
             return .throttled(retryAfter: retryAfter)
         case 404:
+            // File-not-found is an endpoint result; a non-JSON 404 means an old BFF.
+            if (try? JSONDecoder().decode(DesktopEnvelope.self, from: data))?.error != nil {
+                return .server(status: status, message: message)
+            }
             return .desktopAPIMissing
         case 503:
+            if let supplied = (try? JSONDecoder().decode(DesktopEnvelope.self, from: data))?.error,
+               supplied != "Desktop access is not configured on this host" {
+                return .server(status: status, message: supplied)
+            }
             return .desktopAccessDisabled
         default:
             return .server(status: status, message: message)

@@ -75,6 +75,7 @@ The implementation behind the product remains available to inspect: the React in
 | Workflow learning | Marks a local observation window, redacts it, produces a reviewable workflow draft, stores the approved recipe, and replays it with confirmation gates. |
 | Hunting | Maintains a canonical CV and search profile, discovers roles, prepares application artifacts, fills verified fields, stops for human checkpoints, and records application history. |
 | Nodes and screens | Lists paired OpenClaw nodes, removes offline nodes, takes screen snapshots on demand, and supports bounded manual click and scroll control when a node advertises it. |
+| Device files | Browses shared folders on the Orion server and paired computers from both the web dashboard and Mac app, with safe previews, seekable media, and streamed downloads. See [Files across devices](docs/device-files.md) for setup and limits. |
 | Local plugins | Loads reviewed sibling packages through a small generic SDK, mounts authenticated plugin APIs and assets, and adds their custom-element pages to desktop and mobile navigation. |
 
 ## Architecture

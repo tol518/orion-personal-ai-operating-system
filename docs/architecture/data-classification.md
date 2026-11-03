@@ -13,6 +13,7 @@ documentation, and build scripts.
 
 - `client/` React/Vite control surface
 - `server/*.js` BFF modules and `server/**/*.test.js`
+- `server/device-file-posix.py` and its regression tests, the fixed descriptor-based file helper
 - `openclaw-plugin/` plugin policy code
 - `apps/macos/` native client source
 - `docs/`, `scripts/`, `ops/`
@@ -45,6 +46,12 @@ revoking it does not require rotating the gateway token.
 Memory/Second Brain note bodies, CVs, cover letters, application history, browser profiles,
 screenshots, and prompt content. These stay in their existing trusted location. They are reachable
 only through a deliberately implemented BFF endpoint, and they are excluded from audit events.
+
+The Files endpoint deliberately makes configured shared-folder content available to authenticated
+clients on request. File metadata, downloads, and temporary native previews are Class D material,
+not source or runtime backups. Do not add them, real shared-root paths, or node mappings to Git.
+Only explicitly requested previews/downloads reach the Mac; no folder is synchronized in the
+background. See [Files across devices](../device-files.md) for the read-only access contract.
 
 ## Enforcement
 

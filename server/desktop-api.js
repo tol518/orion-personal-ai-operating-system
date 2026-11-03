@@ -9,6 +9,7 @@
 // as a prefix, so mounting it later would subject native requests to the browser's cookie and
 // same-origin checks, which a native client cannot satisfy.
 import express from "express";
+import { createDeviceFilesApi } from "./device-files-api.js";
 import { DesktopAccess, desktopBearerToken } from "./desktop-access.js";
 import { REMOTE_SERVICES, SELF_NODE_ID } from "./remote-access.js";
 import { buildFindings } from "./security-review.js";
@@ -74,6 +75,7 @@ const CAPABILITY_MAP = [
  */
 export function createDesktopApi({
   gateway,
+  files,
   access,
   submitChatTurn,
   chatHistory,
@@ -128,6 +130,11 @@ export function createDesktopApi({
     req.desktopClient = client;
     next();
   });
+
+  if (files) router.use("/files", createDeviceFilesApi({
+    files,
+    audit: (req, action, outcome) => access.record(action, req.desktopClient.clientId, outcome),
+  }));
 
   router.post("/unpair", (req, res) => {
     access.revoke(desktopBearerToken(req));

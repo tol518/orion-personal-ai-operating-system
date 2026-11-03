@@ -6,6 +6,7 @@ import {
   CircleHelp,
   Cpu,
   FileSpreadsheet,
+  FolderOpen,
   FlaskConical,
   Landmark,
   MessageSquare,
@@ -27,6 +28,7 @@ export type CoreView =
   | "memory"
   | "nodes"
   | "screens"
+  | "files"
   | "usage"
   | "workflows";
 export type View = CoreView | (string & {});
@@ -41,6 +43,7 @@ export const NAV: { key: CoreView; icon: LucideIcon; label: string }[] = [
   { key: "workflows", icon: Workflow, label: "Workflows" },
   { key: "nodes", icon: Cpu, label: "Nodes" },
   { key: "screens", icon: Monitor, label: "Screens" },
+  { key: "files", icon: FolderOpen, label: "Files" },
   { key: "usage", icon: Zap, label: "Usage" },
 ];
 

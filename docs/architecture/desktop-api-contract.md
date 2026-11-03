@@ -83,6 +83,7 @@ client key (5 attempts / 5 minutes) by the same logic the existing access gates 
 | `POST /api/v1/desktop/chat` | the BFF's existing `submitChatTurn` path | Delegates to the *same* function `/api/chat` uses, so memory retrieval, execution policy, attachment grants, and safety behavior are identical. The desktop app does not re-implement any of it. |
 | `GET /api/v1/desktop/events` | the existing SSE fan-out | Registers with the same `broadcast()` used by `/api/events`, filtered to a desktop event allowlist. One event model, not two. |
 | `GET /api/v1/desktop/nodes` | gateway `node.list` | Read-only in V1, projected to `DesktopNodeSummary`. No shadow node registry. |
+| `GET /api/v1/desktop/files/*` | shared `DeviceFiles` service and fixed node worker | Authenticated device discovery, shared-root listing, metadata, preview, and range/download reads. No arbitrary path or command input; details in [Files across devices](../device-files.md). |
 | `GET /api/v1/desktop/remote-access` | `server/remote-access.js` | Which native remote-desktop service is reachable per node, and at what address. Discovery only. |
 | `POST /api/v1/desktop/remote-access/:nodeId/session` | `server/remote-access.js` | Records that a session was opened and returns host, port, and scheme. |
 | `GET /api/v1/desktop/remote-access/audit` | `server/remote-access.js` | Remote-session audit events: actor, node, service, time. |
@@ -215,9 +216,13 @@ read.
 
 ## Deliberate omissions in V1
 
-No extraction, Hunting, Finance Lab, workflow learning, broker control, terminal execution,
-filesystem browsing, screen control, or remote desktop route exists on this surface. The Mini
-continues to serve those to the web client; they are simply not reachable from `Orion.app`.
+Extraction, Hunting, Finance Lab, workflow learning, broker control, arbitrary terminal execution,
+and screen control remain excluded. The Mini continues to serve those to the web client.
+
+Shared-folder browsing, previews, and downloads are an additive Files surface after V1, governed
+by the same desktop token plus server-owned shared roots. Native remote desktop discovery and
+session launch are the separate, implemented surface documented above. Neither addition exposes
+an arbitrary node-command endpoint.
 
 `DELETE` on sessions and nodes is also omitted: V1 is read-plus-chat, and destructive gateway
 calls stay behind the browser boundary until a per-action authorization model is tested.
