@@ -4,6 +4,11 @@
 **Audience:** the developer or coding agent building the native macOS application
 **Basis:** the public ORION repository at commit `a0dee74795a507a6328b99c8c5aecacf85b7026f` and the current Orion deployment model.
 
+**Later addition:** read-only shared-folder browsing, previews, and downloads are now implemented
+for both clients under the [Files access contract](../device-files.md). The V1 exclusions below
+describe the original release boundary. This addition keeps the Mini as runtime owner and does
+not enable the excluded automation, trading, terminal, or screen-control features.
+
 ## Decision Summary
 
 Build the MacBook application as a native **client of the existing Mac mini deployment**. Do not move, clone, or recreate the existing agents for the first release.

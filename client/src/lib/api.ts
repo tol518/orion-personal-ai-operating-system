@@ -8,6 +8,7 @@ import type {
   WorkflowRun,
 } from "./workflow-types";
 import type { OrionPluginManifest } from "./plugin-types";
+import { fileQuery, type FileDevice, type FileRoot, type FileListing, type FileInfo } from "./file-types";
 
 const BASE = "/api";
 
@@ -430,8 +431,8 @@ export type MemoryAccessState = { ok: true; unlocked: boolean; accessToken?: str
 let huntingAccessToken: string | null = null;
 let memoryAccessToken: string | null = null;
 
-async function getJson<T = any>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+async function getJson<T = any>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { signal });
   const body = await res.json();
   if (!body.ok) throw new Error(body.error ?? `GET ${path} failed`);
   return body as T;
@@ -608,6 +609,14 @@ export const api = {
   logout: () => postJson<{ ok: true; authenticated: boolean }>("/auth/logout", {}),
   status: () => getJson("/status"),
   nodes: () => getJson("/nodes"),
+  fileDevices: (signal?: AbortSignal) => getJson<{ ok: true; devices: FileDevice[]; gatewayUnavailable: boolean }>("/files/devices", signal),
+  fileRoots: (deviceId: string, signal?: AbortSignal) => getJson<{ ok: true; roots: FileRoot[] }>(`/files/${encodeURIComponent(deviceId)}/roots`, signal),
+  fileList: (deviceId: string, root: string, path: string, offset = 0, signal?: AbortSignal) =>
+    getJson<FileListing>(`/files/${encodeURIComponent(deviceId)}/list?${fileQuery(root, path)}&offset=${offset}`, signal),
+  fileInfo: (deviceId: string, root: string, path: string, revision: string, signal?: AbortSignal) =>
+    getJson<FileInfo>(`/files/${encodeURIComponent(deviceId)}/stat?${fileQuery(root, path, revision)}`, signal),
+  fileUrl: (deviceId: string, root: string, path: string, revision: string, download = false) =>
+    `/api/files/${encodeURIComponent(deviceId)}/content?${fileQuery(root, path, revision)}&${download ? "download=1" : "preview=1"}`,
   deleteNode: (nodeId: string) => deleteJson(`/nodes/${encodeURIComponent(nodeId)}`, {}),
   usage: (range = "7d") => getJson<UsageReport>(`/usage?range=${encodeURIComponent(range)}`),
   sessions: (limit = 20) => getJson(`/sessions?limit=${limit}`),

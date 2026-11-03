@@ -20,6 +20,7 @@ import type { OrionPlugin } from "./lib/plugin-types";
 
 const ExtractionPage = lazy(() => import("./components/ExtractionPage"));
 const ScreensPage = lazy(() => import("./components/ScreensPage"));
+const FilesPage = lazy(() => import("./components/FilesPage"));
 const HuntingPage = lazy(() => import("./components/HuntingPage"));
 const WorkflowsPage = lazy(() => import("./components/WorkflowsPage"));
 
@@ -420,6 +421,12 @@ export default function App() {
         return (
           <Suspense fallback={<div className="screens-route-loading">Preparing secure screen view…</div>}>
             <ScreensPage nodes={nodes} />
+          </Suspense>
+        );
+      case "files":
+        return (
+          <Suspense fallback={<div className="p-4 text-sm text-gray-400">Loading device files...</div>}>
+            <FilesPage />
           </Suspense>
         );
       case "usage":

@@ -104,6 +104,8 @@ public final class OrionStore {
         self.settings = settingsStore.load()
     }
 
+    public func makeFileBrowser() -> FileBrowserStore { FileBrowserStore(client: client) }
+
     // MARK: - Lifecycle
 
     /// Restores a previous connection on launch, or stops at the screen the user needs to act on.

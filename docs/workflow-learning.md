@@ -21,7 +21,7 @@ nothing in this integration calls a Screenpipe cloud endpoint or needs an accoun
 
 The $25/month Standard plan covers the pre-built signed desktop app and commercial use. **This
 install is personal and non-commercial, so no subscription is needed.** The line to watch: using it
-for TravelVogue work rather than your own would cross into commercial use and need a licence.
+for an employer's work rather than your own would cross into commercial use and need a licence.
 
 If that ever changes, the capture layer is swappable — Screenpipe is confined to
 [`screenpipe-client.js`](../server/workflows/screenpipe-client.js) and `normalizeItem()` in
