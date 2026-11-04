@@ -3,6 +3,7 @@
 import base64
 import importlib.util
 import os
+import stat
 from pathlib import Path
 import sys
 import tempfile
@@ -119,12 +120,53 @@ class BoundaryTests(unittest.TestCase):
             self.assertEqual(worker.respond(self.request("read"))["statusCode"], 501)
         with patch.object(worker.sys, "platform", "win32"):
             self.assertEqual(worker.respond(self.request("read"))["statusCode"], 501)
-        for release in ("4.4.0-19041-Microsoft", "6.6.87.2-microsoft-standard-WSL2"):
-            with patch.object(worker.os, "uname", return_value=SimpleNamespace(release=release)):
-                for operation in ("roots", "list", "stat", "read"):
+
+    def test_defaults_share_the_home_folder_and_wsl_shares_only_its_linux_home(self):
+        (self.shared / "Desktop").mkdir()
+        with patch.dict(os.environ, {"HOME": str(self.shared)}):
+            with patch.object(worker.os, "uname", return_value=SimpleNamespace(release="6.8.0-generic")):
+                roots = worker.respond({"operation": "roots"})["roots"]
+                self.assertEqual(roots, [{"id": "home", "label": "Home"}, {"id": "desktop", "label": "Desktop"}])
+                listing = worker.respond({"operation": "list", "rootId": "home", "path": "branch"})
+                self.assertEqual([entry["name"] for entry in listing["entries"]], ["inside.txt"])
+            for release in ("4.4.0-19041-Microsoft", "6.6.87.2-microsoft-standard-WSL2"):
+                with patch.object(worker.os, "uname", return_value=SimpleNamespace(release=release)):
+                    roots = worker.respond({"operation": "roots"})["roots"]
+                    self.assertEqual(roots, [{"id": "linux-home", "label": "Linux home"}])
+
+    @unittest.skipUnless(sys.platform == "linux", "mount table from /proc")
+    def test_pathname_resolving_mounts_are_refused_per_descriptor(self):
+        # A held directory on WSL's 9p drives follows a Windows junction planted after a rename.
+        with patch.object(worker, "mounts", {}):
+            self.assertEqual(worker.respond(self.request("read"))["statusCode"], 501)
+        for filesystem in ("9p", "cifs"):
+            with patch.object(worker, "mounts", {mount: filesystem for mount in map(str, range(100000))}):
+                for operation in ("list", "stat", "read"):
                     result = worker.respond(self.request(operation))
                     self.assertEqual(result["statusCode"], 501)
-                    self.assertIn("WSL file sharing is disabled", result["error"])
+                    self.assertIn("Windows path", result["error"])
+                self.assertEqual(worker.respond(self.request("roots")), {"ok": True, "roots": []})
+        self.assert_inside("read", worker.respond(self.request("read")))
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS hidden flag")
+    def test_macos_hidden_flag_hides_entries_like_a_leading_dot(self):
+        library = self.shared / "Library"
+        library.mkdir()
+        (library / "Cookies.binarycookies").write_bytes(b"secret")
+        os.chflags(library, stat.UF_HIDDEN)
+        (self.branch / "flagged.txt").write_bytes(b"flagged")
+        os.chflags(self.branch / "flagged.txt", stat.UF_HIDDEN)
+        listing = worker.respond({**self.request("list"), "path": ""})
+        self.assertEqual([entry["name"] for entry in listing["entries"]], ["branch"])
+        self.assertEqual([entry["name"] for entry in worker.respond(self.request("list"))["entries"]], ["inside.txt"])
+        for operation, path in (("list", "Library"), ("read", "Library/Cookies.binarycookies"),
+                                ("stat", "branch/flagged.txt"), ("read", "branch/flagged.txt")):
+            result = worker.respond({**self.request(operation), "path": path})
+            self.assertEqual(result["statusCode"], 403, path)
+        hidden_root = self.request("list")
+        hidden_root["roots"][0]["path"] = str(library)
+        hidden_root["path"] = ""
+        self.assertTrue(worker.respond(hidden_root)["ok"])
 
     def test_configured_root_and_ancestor_links_are_refused(self):
         alias = self.base / "alias"

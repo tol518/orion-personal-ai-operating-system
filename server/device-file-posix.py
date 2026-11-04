@@ -16,6 +16,12 @@ class FileAccessError(Exception):
         self.status = status
 
 
+# These re-resolve a held directory by pathname on the server side. Verified on WSL's Windows
+# drives: rename a folder and plant a Windows junction, and a later openat follows the junction.
+PATHNAME_FILESYSTEMS = {"9p", "drvfs", "cifs", "smb3"}
+mounts = None
+
+
 def safe_name(name):
     return bool(name) and not name.startswith(".") and not any(
         ord(char) < 32 or char in "\\/:" for char in name
@@ -27,18 +33,44 @@ def directory_flags():
     return access | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
+def hidden(info):
+    # macOS hides ~/Library and similar folders with a flag rather than a leading dot.
+    return bool(getattr(info, "st_flags", 0) & getattr(stat, "UF_HIDDEN", 0))
+
+
+def pinned(descriptor):
+    if sys.platform != "linux":
+        return descriptor
+    global mounts
+    try:
+        if mounts is None:
+            with open("/proc/self/mountinfo") as table:
+                mounts = {fields[0]: fields[fields.index("-") + 1] for fields in map(str.split, table)}
+        with open("/proc/self/fdinfo/%d" % descriptor) as info:
+            mount = next((line.split()[1] for line in info if line.startswith("mnt_id:")), None)
+    except (OSError, ValueError, IndexError):
+        mount = None
+    filesystem = mounts.get(mount) if mounts else None
+    if filesystem is None or filesystem in PATHNAME_FILESYSTEMS:
+        raise FileAccessError("Windows and network folders mounted into Linux are not shared from Linux. "
+                              "On WSL, share Windows folders by their Windows path instead.", 501)
+    return descriptor
+
+
 def open_root(path):
     if not isinstance(path, str) or not os.path.isabs(path) or "\x00" in path:
         raise FileAccessError("Invalid shared folder.")
     # Open ONE component relative to each pinned parent, including the root's ancestors.
     descriptor = os.open("/", directory_flags())
     try:
+        pinned(descriptor)
         for name in os.path.normpath(path).split("/"):
             if not name:
                 continue
             child = os.open(name, directory_flags(), dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child
+            pinned(descriptor)
         return descriptor
     except BaseException:
         os.close(descriptor)
@@ -55,6 +87,9 @@ def open_target(root, parts, directory):
             child = os.open(name, flags, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child
+            pinned(descriptor)
+            if sys.platform == "darwin" and hidden(os.fstat(descriptor)):
+                raise FileAccessError("Only visible files inside shared folders are available.", 403)
         return descriptor
     except BaseException:
         os.close(descriptor)
@@ -79,14 +114,16 @@ def operate(request):
             or os.stat not in os.supports_follow_symlinks or os.scandir not in os.supports_fd
             or not all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_DIRECTORY", "O_CLOEXEC", "O_NONBLOCK", "pread", "O_SEARCH" if sys.platform == "darwin" else "O_PATH"))):
         raise FileAccessError("This device lacks hardened filesystem support.", 501)
-    if "microsoft" in os.uname().release.lower():
-        # DrvFS can re-resolve a renamed directory descriptor by pathname. The normal
-        # openat/no-follow proof therefore does not apply to Windows junction races.
-        raise FileAccessError("WSL file sharing is disabled until a native Windows handle-based backend is available. Browsing other computers from Windows still works.", 501)
     configured = request.get("roots")
     if configured is None:
-        names = ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Movies" if sys.platform == "darwin" else "Videos"]
-        configured = [{"id": name.lower(), "label": name, "path": os.path.join(os.path.expanduser("~"), name)} for name in names]
+        home = os.path.expanduser("~")
+        if "microsoft" in os.uname().release.lower():
+            # WSL's Windows folders come from the Windows handle helper; Linux shares only its own home.
+            configured = [{"id": "linux-home", "label": "Linux home", "path": home}]
+        else:
+            names = ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Movies" if sys.platform == "darwin" else "Videos"]
+            configured = [{"id": "home", "label": "Home", "path": home}] + [
+                {"id": name.lower(), "label": name, "path": os.path.join(home, name)} for name in names]
     operation = request.get("operation")
     if operation == "roots":
         roots = []
@@ -97,6 +134,9 @@ def operate(request):
                 roots.append({"id": candidate["id"], "label": candidate["label"]})
             except OSError as error:
                 if error.errno not in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.EACCES, errno.EPERM):
+                    raise
+            except FileAccessError as error:
+                if error.status != 501:
                     raise
         return {"ok": True, "roots": roots}
     root = next((root for root in configured if root["id"] == request.get("rootId")), None)
@@ -126,6 +166,8 @@ def operate(request):
         info = os.stat(parts[-1], dir_fd=target, follow_symlinks=False) if operation == "stat" else os.fstat(target)
         if stat.S_ISLNK(info.st_mode):
             raise FileAccessError("Linked files and folders are not shared.", 403)
+        if operation == "stat" and hidden(info):
+            raise FileAccessError("Only visible files inside shared folders are available.", 403)
         if operation == "list":
             offset = request.get("offset", 0)
             if type(offset) is not int or not 0 <= offset <= 5000:
@@ -136,6 +178,11 @@ def operate(request):
                 for entry in directory:
                     if not safe_name(entry.name) or not (entry.is_dir(follow_symlinks=False) or entry.is_file(follow_symlinks=False)):
                         continue
+                    try:
+                        if sys.platform == "darwin" and hidden(entry.stat(follow_symlinks=False)):
+                            continue
+                    except OSError:
+                        continue
                     if len(names) == 5000:
                         truncated = True
                         break
@@ -145,7 +192,7 @@ def operate(request):
             for name, _ in names[offset:offset + 100]:
                 try:
                     item = os.stat(name, dir_fd=target, follow_symlinks=False)
-                    if stat.S_ISREG(item.st_mode) or stat.S_ISDIR(item.st_mode):
+                    if (stat.S_ISREG(item.st_mode) or stat.S_ISDIR(item.st_mode)) and not hidden(item):
                         entries.append(describe(name, item))
                 except OSError as error:
                     if error.errno not in (errno.ENOENT, errno.EACCES, errno.EPERM):

@@ -11,18 +11,22 @@ The Orion server appears even when no execution nodes are paired. Other computer
 paired OpenClaw Node hosts running macOS or Linux, connected to the gateway, advertise `system.run`,
 and have `node` and Python 3.8+ available. macOS uses `/usr/bin/python3`; Linux uses `python3`
 on the host's executable search path. Python must support descriptor-relative opens, non-following
-stat, descriptor directory scans, and positioned reads. Missing capabilities fail closed. Windows
-and WSL file sharing are not available until an equivalent native Windows handle-based backend is implemented and tested;
-there is no less-safe fallback. Existing node execution policy still applies; Orion
-does not approve commands or weaken that policy automatically.
+stat, descriptor directory scans, and positioned reads. Missing capabilities fail closed. Existing
+node execution policy still applies; Orion does not approve commands or weaken that policy
+automatically.
 
-WSL reports itself as Linux, but its mounted Windows filesystem does not preserve the directory
-descriptor invariant required by this backend during Windows-junction replacement. The worker
-therefore refuses all WSL file operations, including roots and metadata, rather than guessing
-which mounts are safe or silently following mounted Windows paths. Do not configure `/mnt/c`
-shares as a workaround. Windows and WSL users can still browse and download files from other
-supported computers through the web dashboard; sharing their own Windows folders requires the
-separate native Windows backend.
+A Node host inside WSL shares its Windows folders through a separate Windows helper, run with
+Python 3.8+ **for Windows** (`python.exe` on the Node host's `PATH`, which WSL interop provides by
+default). Linux paths inside WSL, such as the Linux home, stay with the POSIX helper. A native
+Windows Node host (not WSL) remains unsupported until the launcher is tested end to end there.
+
+WSL's mounted Windows drives (`/mnt/c`, filesystem type `9p`) do not keep a held directory
+descriptor pinned: the Windows side resolves it again by pathname. Renaming a held folder and
+planting a Windows junction at its old name redirects the next descriptor-relative open to the
+junction's target. This was reproduced deterministically on WSL2. The POSIX helper therefore refuses
+any descriptor on a `9p`, `drvfs`, `cifs`, or `smb3` mount, checked per descriptor through
+`/proc/self/fdinfo`. Configure Windows folders by their Windows path (`C:\...`), never as
+`/mnt/c/...`.
 
 Pairing Orion.app to the server makes the Mac a client. To share that Mac's own folders back
 through Orion, also connect an OpenClaw Node host on it. A remote desktop address alone does
@@ -39,11 +43,18 @@ Orion never grants OS privacy permission, edits the privacy database, or disable
 
 ## Shared folders
 
-By default, existing Desktop, Documents, Downloads, Pictures, Music, and Movies (macOS) or Videos
-(Linux) folders under each host user's home are available to authenticated Orion
-clients. Files does not expose a whole drive, hidden files, or symbolic links. This includes
-configured roots and their ancestors: configure the actual directory path, not a symlink alias.
-Linked default folders are omitted rather than followed.
+By default, each host user's whole **Home** folder is available to authenticated Orion clients,
+followed by shortcuts to the existing Desktop, Documents, Downloads, Pictures, Music, and Movies
+(macOS) or Videos (Linux, Windows) folders. On WSL, the defaults are the Windows user's profile and
+its known folders (following OneDrive folder redirection), plus **Linux home** for the WSL user.
+
+Files does not expose a whole drive, hidden files, or links. Hidden means a leading dot
+everywhere, the hidden flag on macOS (so `~/Library` is not shared), and the hidden or system
+attribute on Windows (so `AppData` and `NTUSER.DAT` are not shared). Symbolic links, Windows
+junctions, and mount points are refused, including in configured roots and their ancestors:
+configure the actual directory path, not an alias. Linked default folders are omitted rather than
+followed. Everything else under Home is visible to anyone who can sign in to Orion, including
+project folders and app data stored outside hidden folders.
 
 To replace the defaults, set `ORION_FILE_ROOTS_JSON` **only in the server's private environment**.
 It maps `local` and gateway node IDs to arrays of `{id, label, path}`. Paths are resolved on the
@@ -53,7 +64,7 @@ for that device. Devices absent from this object keep the defaults.
 Sanitized example:
 
 ```dotenv
-ORION_FILE_ROOTS_JSON={"local":[{"id":"shared","label":"Shared","path":"/Users/example/Shared"}],"node-example":[{"id":"work","label":"Work","path":"/home/example/Shared"}]}
+ORION_FILE_ROOTS_JSON={"local":[{"id":"shared","label":"Shared","path":"/Users/example/Shared"}],"node-example":[{"id":"work","label":"Work","path":"/home/example/Shared"}],"node-wsl-example":[{"id":"docs","label":"Documents","path":"C:\\Users\\example\\Documents"},{"id":"linux","label":"Linux","path":"/home/example"}]}
 ```
 
 Keep real root paths and node IDs out of Git. Use this setting for actual canonical folder paths,
@@ -100,6 +111,14 @@ already acquired during a request remains that request's capability; this is not
 its pathname stays beneath the root for the whole request. Hard-link provenance and privileged
 mount or kernel changes are outside this boundary. Configure only folders whose contents you
 intend to share, and retain normal OS access controls.
+
+The Windows helper keeps the same guarantee with NT handles: every component is opened with
+`NtCreateFile` relative to the already-open parent handle and with `FILE_OPEN_REPARSE_POINT`, so
+NTFS resolves the name inside that directory object and never follows a reparse point. Junctions,
+symbolic links, and mount points are refused; non-link reparse points such as OneDrive
+placeholders are allowed. Directory listings, metadata, and reads all come from handles opened that
+way. `server/device-file-windows-test.py` swaps folders for junctions before and after each open
+and runs in CI on Windows.
 
 `content` supports HTTP byte ranges, suffix ranges, HEAD requests, and seekable media. Revision
 checks reject files changed during a transfer. Offline, revoked, or incapable nodes return a

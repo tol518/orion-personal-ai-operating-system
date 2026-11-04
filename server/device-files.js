@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
-import { deviceFileOperation, deviceFileProgram } from "./device-file-worker.js";
+import { deviceFileOperation, deviceFilePrograms } from "./device-file-worker.js";
 
 const CHUNK_BYTES = 65536;
 export const TEXT_PREVIEW_BYTES = 256 * 1024;
 const REMOTE_TIMEOUT_MS = 30_000;
-const remoteProgram = `const deviceFileProgram = ${JSON.stringify(deviceFileProgram)}; (${deviceFileOperation.toString()})(JSON.parse(Buffer.from(process.argv[1], 'base64').toString('utf8'))).then(result => process.stdout.write(JSON.stringify(result))).catch(() => { process.stderr.write('File operation failed'); process.exitCode = 1; });`;
+const remoteProgram = `const deviceFilePrograms = ${JSON.stringify(deviceFilePrograms)}; (${deviceFileOperation.toString()})(JSON.parse(Buffer.from(process.argv[1], 'base64').toString('utf8'))).then(result => process.stdout.write(JSON.stringify(result))).catch(() => { process.stderr.write('File operation failed'); process.exitCode = 1; });`;
 const fail = (message, statusCode) => Object.assign(new Error(message), { statusCode });
 
 export function parseFileRoots(value = "") {

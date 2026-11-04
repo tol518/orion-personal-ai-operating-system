@@ -22,10 +22,8 @@ import { DesktopAccess } from "./desktop-access.js";
 const run = promisify(execFile);
 test("helper timeouts explain folder permissions and malformed output fails closed", async () => {
   // Bind test programs to the production launcher without adding a client-controlled hook.
-  const bindProgram = new Function(
-    "deviceFileProgram",
-    `return (${deviceFileOperation.toString()})`,
-  );
+  const bindProgram = (posix) =>
+    new Function("deviceFilePrograms", `return (${deviceFileOperation.toString()})`)({ posix });
   const timeout = await bindProgram("import signal, time; signal.alarm(1); time.sleep(5)")({});
   assert.equal(timeout.statusCode, 504);
   assert.match(timeout.error, /Files and Folders permissions/);

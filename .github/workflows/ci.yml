@@ -56,6 +56,22 @@ jobs:
         working-directory: server
         run: npm test
 
+  windows-file-boundary:
+    name: Windows file boundary
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run junction-swap tests against the Windows handle helper
+        run: python -I server/device-file-windows-test.py -v
+
   plugin-policy-tests:
     name: Plugin policy tests
     runs-on: ubuntu-latest
