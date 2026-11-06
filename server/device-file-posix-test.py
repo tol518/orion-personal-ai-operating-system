@@ -1,6 +1,8 @@
 """Deterministic adversarial swaps through the production filesystem boundary."""
 
 import base64
+import io
+import json
 import importlib.util
 import os
 import stat
@@ -37,9 +39,21 @@ class BoundaryTests(unittest.TestCase):
                 "path": "branch" if operation == "list" else "branch/inside.txt",
                 "offset": 0, "length": 64}
 
+    def respond(self, request):
+        if request["operation"] != "stream":
+            return worker.respond(request)
+        out = io.BytesIO()
+        result = worker.respond(request, out)
+        if result is not None:
+            return result
+        header, _, data = out.getvalue().partition(b"\n")
+        return {**json.loads(header), "data": data}
+
     def assert_inside(self, operation, result):
         self.assertTrue(result["ok"], result)
-        if operation == "read":
+        if operation == "stream":
+            self.assertEqual(result["data"], b"inside")
+        elif operation == "read":
             self.assertEqual(base64.b64decode(result["base64"]), b"inside")
         elif operation == "stat":
             self.assertEqual(result["sizeBytes"], 6)
@@ -68,7 +82,7 @@ class BoundaryTests(unittest.TestCase):
 
         supported = worker.os.supports_dir_fd | {adversarial_open}
         with patch.object(worker.os, "open", adversarial_open), patch.object(worker.os, "supports_dir_fd", supported):
-            result = worker.respond(self.request(operation))
+            result = self.respond(self.request(operation))
         self.assertTrue(swapped)
         if before:
             self.assertFalse(result["ok"], result)
@@ -79,7 +93,7 @@ class BoundaryTests(unittest.TestCase):
     def test_swaps_before_and_after_each_open_cannot_escape(self):
         for root in (False, True):
             for before in (False, True):
-                for operation in ("list", "stat", "read"):
+                for operation in ("list", "stat", "read", "stream"):
                     with self.subTest(root=root, before=before, operation=operation):
                         # Separate paths for each destructive swap.
                         case = BoundaryTests()
@@ -222,6 +236,25 @@ class BoundaryTests(unittest.TestCase):
             request["path"] = "branch/missing.txt"
             self.assertEqual(worker.respond(request)["statusCode"], 404)
         self.assertEqual(len(os.listdir("/dev/fd")), count)
+
+
+    def test_streams_send_one_header_then_raw_bytes_and_stop_when_the_file_changes(self):
+        request = self.request("stream")
+        self.assert_inside("stream", self.respond(request))
+        self.assertEqual(self.respond({**request, "offset": 2, "length": 3})["data"], b"sid")
+        self.assertEqual(worker.respond(request)["statusCode"], 400, "a stream needs somewhere to go")
+        self.assertEqual(self.respond({**request, "revision": "stale"})["statusCode"], 409)
+        original = worker.os.pread
+
+        def changing(*args):
+            data = original(*args)
+            with open(self.branch / "inside.txt", "ab") as file:
+                file.write(b"!")
+            return data
+
+        with patch.object(worker.os, "pread", changing):
+            with self.assertRaises(worker.StreamInterrupted):
+                worker.respond(request, io.BytesIO())
 
 
 if __name__ == "__main__":

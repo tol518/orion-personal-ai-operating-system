@@ -92,6 +92,17 @@ test("the desktop surface runs its own authorization", () => {
   assert.match(desktop, /Desktop authentication required/, "the desktop router does not reject unauthenticated requests");
 });
 
+test("the node file-stream router sits before the gate and accepts only one-time tickets", () => {
+  // A paired computer has no browser session; its upload must not hit the cookie gate, and it
+  // must not become a way in either.
+  const mount = lineOf(/^app\.use\("\/api\/v1\/node", createNodeFilesApi\(/);
+  assert.ok(mount, "the node file-stream router mount is missing");
+  assert.ok(mount < lineOf(GATE), "the node file-stream router must be mounted before the browser gate");
+  const api = fs.readFileSync(path.join(here, "device-files-api.js"), "utf8");
+  assert.match(api, /files\.tickets\.claim\(ticket\)/, "the node router does not claim a ticket");
+  assert.match(api, /if \(!waiting\) \{\s*res\.status\(401\)/, "the node router does not refuse an unknown ticket");
+});
+
 test("the Second Brain keeps its own lock behind the gate", () => {
   // Memory is gated twice on purpose: general app access is not the same as vault access.
   assert.ok(lineOf(/^app\.use\("\/api\/memories", requireMemoryAccess\)/), "/api/memories has lost its Second Brain lock");

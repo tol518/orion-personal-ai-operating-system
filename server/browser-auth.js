@@ -25,7 +25,7 @@ export const PUBLIC_API_PATHS = Object.freeze([
 ]);
 
 /** Mounts that must sit in front of the gate because they authenticate on their own. */
-const SELF_AUTHENTICATING_MOUNTS = Object.freeze(["/api/v1/desktop"]);
+const SELF_AUTHENTICATING_MOUNTS = Object.freeze(["/api/v1/desktop", "/api/v1/node"]);
 
 /**
  * Origins allowed to sign in. Loopback on the BFF port and the Vite dev port are always
@@ -183,12 +183,12 @@ export function inspectGateOrder(app, { gate, publicPaths = PUBLIC_API_PATHS } =
       }
       return;
     }
-    // A mounted Router. Only self-authenticating ones may precede the gate; the desktop router
-    // must, because a native client has no browser origin and cannot pass a cookie check.
+    // A mounted Router. Only self-authenticating ones may precede the gate, and these must: the
+    // native client and paired computers have no browser origin and cannot pass a cookie check.
     if (layer?.name === "router" && layer.regexp) {
       for (const mount of SELF_AUTHENTICATING_MOUNTS) {
         if (layer.regexp.test(`${mount}/probe`) && gateIndex !== -1 && index > gateIndex) {
-          problems.push(`the ${mount} router is mounted after the gate, so the native client cannot authenticate`);
+          problems.push(`the ${mount} router is mounted after the gate, so its own authentication never runs`);
         }
       }
     }

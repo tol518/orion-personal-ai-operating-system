@@ -12,9 +12,10 @@ import {
   filePresentation,
   parseFileRange,
   parseFileRoots,
+  parseStreamUrl,
   TEXT_PREVIEW_BYTES,
 } from "./device-files.js";
-import { createDeviceFilesApi } from "./device-files-api.js";
+import { createDeviceFilesApi, createNodeFilesApi } from "./device-files-api.js";
 import { createBrowserAuth } from "./browser-auth.js";
 import { createDesktopApi } from "./desktop-api.js";
 import { DesktopAccess } from "./desktop-access.js";
@@ -220,7 +221,9 @@ function remoteGateway(roots, overrides = {}) {
       calls.push(params);
       assert.equal(params.command, "system.run");
       assert.equal(params.params.suppressNotifyOnExit, true);
-      assert.ok(params.params.command.join(" ").length < 32767, "fits Windows command-line limit");
+      // Native Windows hosts are refused before any invocation, so the binding limit is Linux's
+      // single-argument cap (MAX_ARG_STRLEN, 128 KiB), not Windows' 32,767-character command line.
+      assert.ok(params.params.command[2].length < 131072, "fits one Linux argument");
       const command = params.params.command;
       const input = JSON.parse(Buffer.from(command[3], "base64"));
       assert.deepEqual(input.roots, roots);
@@ -418,4 +421,125 @@ test("desktop tokens access only shared roots and audit without filenames or con
     assert.ok(!audit.includes(secret));
   access.revoke(pair.token);
   assert.equal((await fetch(`${prefix}/roots`, { headers })).status, 401);
+});
+
+async function streamServer(t, files) {
+  const app = express();
+  app.use(express.json());
+  app.use("/api/v1/node", createNodeFilesApi({ files }));
+  app.use("/api/files", createDeviceFilesApi({ files }));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  t.after(
+    () =>
+      new Promise((resolve) => {
+        server.closeAllConnections();
+        server.close(resolve);
+      }),
+  );
+  return `http://127.0.0.1:${server.address().port}`;
+}
+const invokes = (gateway) => gateway.calls.map((call) => JSON.parse(Buffer.from(call.params.command[3], "base64")).operation);
+
+test("stream addresses keep any path prefix and refuse credentials, queries and other schemes", () => {
+  assert.equal(parseStreamUrl(""), null);
+  assert.equal(parseStreamUrl("https://mini.example.ts.net:8443"), "https://mini.example.ts.net:8443/api/v1/node/files");
+  assert.equal(parseStreamUrl("https://host.example/orion/"), "https://host.example/orion/api/v1/node/files");
+  for (const value of ["ftp://host", "https://user:pw@host", "https://host/?x=1", "not a url"])
+    assert.throws(() => parseStreamUrl(value), /ORION_NODE_STREAM_URL/, value);
+});
+test("a paired computer streams a whole range through one invocation and a one-time ticket", async (t) => {
+  const { roots, shared } = await fixture(t);
+  const bytes = Buffer.from(Array.from({ length: 3_000_000 }, (_, i) => (i * 7) % 256));
+  await fs.writeFile(path.join(shared, "film.mp4"), bytes);
+  const gateway = remoteGateway(roots);
+  const files = new DeviceFiles({ gateway, roots: { "test-pc": roots } });
+  const base = await streamServer(t, files);
+  files.streamUrl = parseStreamUrl(base);
+  const url = `${base}/api/files/test-pc/content?root=docs&path=film.mp4`;
+  assert.deepEqual(Buffer.from(await (await fetch(url)).arrayBuffer()), bytes);
+  const partial = await fetch(url, { headers: { Range: "bytes=1000000-1999999" } });
+  assert.equal(partial.status, 206);
+  assert.deepEqual(Buffer.from(await partial.arrayBuffer()), bytes.subarray(1_000_000, 2_000_000));
+  assert.deepEqual(invokes(gateway), ["stat", "stream", "stat", "stream"]);
+  for (const call of gateway.calls.filter((_, i) => i % 2)) {
+    const input = JSON.parse(Buffer.from(call.params.command[3], "base64"));
+    assert.match(input.upload.ticket, /^[A-Za-z0-9_-]{43}$/);
+    assert.ok(call.params.timeoutMs > 60 * 60 * 1000, "a film may outlast the 20-second request limit");
+  }
+  assert.equal(files.tickets.waiting.size, 0);
+});
+test("the upload route takes only a live ticket, once, for exactly the requested length", async (t) => {
+  const files = new DeviceFiles({ gateway: { request: async () => ({ nodes: [] }) } });
+  const base = await streamServer(t, files);
+  const post = (ticket, body, length = body.length) =>
+    fetch(`${base}/api/v1/node/files`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ticket}`, "x-orion-stream-length": String(length) },
+      body,
+    });
+  assert.equal((await post("A".repeat(43), "hello")).status, 401);
+  const wrongLength = files.tickets.issue(5);
+  assert.equal((await post(wrongLength.value, "hello", 6)).status, 400);
+  await assert.rejects(wrongLength.arrival, { statusCode: 502 });
+  const ticket = files.tickets.issue(5);
+  // The computer's request is answered only once the waiting reader has taken every byte.
+  const sent = post(ticket.value, "hello");
+  const received = [];
+  for await (const chunk of await ticket.arrival) received.push(chunk);
+  assert.equal(Buffer.concat(received).toString(), "hello");
+  assert.equal((await sent).status, 200);
+  assert.equal((await post(ticket.value, "hello")).status, 401, "a ticket is good for one delivery");
+  const oversized = files.tickets.issue(3);
+  const refused = post(oversized.value, "hello", 3).catch(() => null);
+  const extra = await oversized.arrival;
+  await assert.rejects(async () => {
+    for await (const _ of extra);
+  }, /more than was requested/);
+  await refused;
+});
+test("a computer that cannot reach the stream address falls back to 64 KiB requests", async (t) => {
+  const { roots, shared } = await fixture(t);
+  const bytes = Buffer.alloc(150_000, 7);
+  await fs.writeFile(path.join(shared, "large.bin"), bytes);
+  const gateway = remoteGateway(roots);
+  const files = new DeviceFiles({ gateway, roots: { "test-pc": roots } });
+  const base = await streamServer(t, files);
+  const closed = express().listen(0, "127.0.0.1");
+  await new Promise((resolve) => closed.once("listening", resolve));
+  const { port } = closed.address();
+  await new Promise((resolve) => closed.close(resolve));
+  files.streamUrl = parseStreamUrl(`http://127.0.0.1:${port}`);
+  const url = `${base}/api/files/test-pc/content?root=docs&path=large.bin`;
+  assert.deepEqual(Buffer.from(await (await fetch(url)).arrayBuffer()), bytes);
+  assert.deepEqual(invokes(gateway), ["stat", "stream", "read", "read", "read"]);
+  gateway.calls.length = 0;
+  assert.deepEqual(Buffer.from(await (await fetch(url)).arrayBuffer()), bytes);
+  assert.deepEqual(invokes(gateway), ["stat", "read", "read", "read"], "no retry until the back-off passes");
+  assert.equal(files.tickets.waiting.size, 0);
+});
+test("local downloads stream from one helper run and a closed browser stops it", async (t) => {
+  const { roots, shared } = await fixture(t);
+  const bytes = Buffer.alloc(5_000_000, 3);
+  await fs.writeFile(path.join(shared, "big.bin"), bytes);
+  const operations = [];
+  const files = new DeviceFiles({
+    gateway: { request: async () => ({ nodes: [] }) },
+    roots: { local: roots },
+    worker: (input, sink) => {
+      operations.push(input.operation);
+      return deviceFileOperation(input, sink);
+    },
+  });
+  const base = await streamServer(t, files);
+  const url = `${base}/api/files/local/content?root=docs&path=big.bin`;
+  assert.deepEqual(Buffer.from(await (await fetch(url)).arrayBuffer()), bytes);
+  assert.deepEqual(operations, ["stat", "stream"]);
+  const controller = new AbortController();
+  const response = await fetch(url, { signal: controller.signal });
+  const reader = response.body.getReader();
+  await reader.read();
+  controller.abort();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(Buffer.from(await (await fetch(url, { headers: { Range: "bytes=0-9" } })).arrayBuffer()), bytes.subarray(0, 10));
 });

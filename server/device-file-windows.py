@@ -19,6 +19,14 @@ class FileAccessError(Exception):
         self.status = status
 
 
+class StreamInterrupted(Exception):
+    """Bytes already went out, so the only honest answer left is to cut the transfer short."""
+
+
+# A stream ends when its consumer stops reading; this bounds one that never does.
+STREAM_SECONDS = 2 * 60 * 60
+
+
 class NtStatusError(Exception):
     def __init__(self, status):
         super().__init__(hex(status))
@@ -197,6 +205,17 @@ def scan(directory):
             offset += following
 
 
+def read_at(handle, position, size):
+    chunk, count = ctypes.create_string_buffer(size), wintypes.DWORD()
+    overlapped = OVERLAPPED(0, 0, position & 0xFFFFFFFF, position >> 32, None)
+    if not KERNEL32.ReadFile(handle, chunk, size, ctypes.byref(count), ctypes.byref(overlapped)):
+        error = ctypes.get_last_error()
+        if error == 38:  # ERROR_HANDLE_EOF
+            return b""
+        raise ctypes.WinError(error)
+    return chunk.raw[:count.value]
+
+
 def default_roots():
     shell32, ole32 = ctypes.WinDLL("shell32"), ctypes.WinDLL("ole32")
     shell32.SHGetKnownFolderPath.argtypes = [ctypes.c_char_p, wintypes.DWORD, wintypes.HANDLE, ctypes.POINTER(ctypes.c_void_p)]
@@ -210,7 +229,7 @@ def default_roots():
     return roots
 
 
-def operate(request):
+def operate(request, out=None):
     if sys.platform != "win32" or sys.version_info < (3, 8):
         raise FileAccessError("This device lacks hardened Windows filesystem support.", 501)
     configured = request.get("roots")
@@ -238,7 +257,7 @@ def operate(request):
     parts = relative.split("/") if relative else []
     if any(not safe_name(part) for part in parts):
         raise FileAccessError("Only visible files inside shared folders are available.", 403)
-    if operation not in ("list", "stat", "read"):
+    if operation not in ("list", "stat", "read", "stream") or (operation == "stream" and out is None):
         raise FileAccessError("Unknown file operation.")
     if operation == "stat" and not parts:
         raise FileAccessError("Only regular files can be opened.")
@@ -247,7 +266,7 @@ def operate(request):
         if operation == "list":
             target = open_target(root_handle, parts, LIST | TRAVERSE, DIRECTORY_FILE)
         else:
-            target = open_target(root_handle, parts, READ_DATA if operation == "read" else 0, 0)
+            target = open_target(root_handle, parts, 0 if operation == "stat" else READ_DATA, 0)
     finally:
         KERNEL32.CloseHandle(root_handle)
     try:
@@ -290,21 +309,33 @@ def operate(request):
         if operation == "stat":
             return {"ok": True, **result}
         offset, length = request.get("offset"), request.get("length")
-        if type(offset) is not int or not 0 <= offset <= 2 ** 53 - 1 or type(length) is not int or not 1 <= length <= 65536:
+        limit = 2 ** 53 - 1 if operation == "stream" else 65536
+        if type(offset) is not int or not 0 <= offset <= 2 ** 53 - 1 or type(length) is not int or not 1 <= length <= limit:
             raise FileAccessError("Invalid file range.")
         size = min(length, max(0, result["sizeBytes"] - offset))
+        if operation == "stream":
+            # One header line, then the range's raw bytes from this same handle.
+            out.write(json.dumps({"ok": True, "offset": offset, "length": size}).encode("ascii") + b"\n")
+            try:
+                sent = 0
+                while sent < size:
+                    chunk = read_at(target, offset + sent, min(size - sent, 1 << 20))
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    sent += len(chunk)
+                out.flush()
+                if sent != size or describe(result["name"], target)["revision"] != result["revision"]:
+                    raise FileAccessError("This file changed while it was being sent.", 409)
+            except BaseException as error:
+                raise StreamInterrupted(str(error)) from error
+            return None
         data = bytearray()
         while len(data) < size:
-            chunk, count, position = ctypes.create_string_buffer(size - len(data)), wintypes.DWORD(), offset + len(data)
-            overlapped = OVERLAPPED(0, 0, position & 0xFFFFFFFF, position >> 32, None)
-            if not KERNEL32.ReadFile(target, chunk, len(chunk), ctypes.byref(count), ctypes.byref(overlapped)):
-                error = ctypes.get_last_error()
-                if error == 38:  # ERROR_HANDLE_EOF
-                    break
-                raise ctypes.WinError(error)
-            if not count.value:
+            chunk = read_at(target, offset + len(data), size - len(data))
+            if not chunk:
                 break
-            data.extend(chunk.raw[:count.value])
+            data.extend(chunk)
         if describe(result["name"], target)["revision"] != result["revision"]:
             raise FileAccessError("This file changed. Refresh the folder and open it again.", 409)
         return {"ok": True, "offset": offset, "base64": base64.b64encode(data).decode("ascii")}
@@ -312,9 +343,9 @@ def operate(request):
         KERNEL32.CloseHandle(target)
 
 
-def respond(request):
+def respond(request, out=None):
     try:
-        return operate(request)
+        return operate(request, out)
     except FileAccessError as error:
         return {"ok": False, "statusCode": error.status, "error": str(error)}
     except (NtStatusError, OSError) as error:
@@ -331,8 +362,15 @@ if sys.platform == "win32":
     NTDLL, KERNEL32 = api()
 
 if __name__ == "__main__":
+    request = json.loads(base64.b64decode(sys.argv[1]))
     # The launcher can be terminated independently. Bound the helper's lifetime too.
-    timer = threading.Timer(15, os._exit, (124,))
+    timer = threading.Timer(STREAM_SECONDS if request.get("operation") == "stream" else 15, os._exit, (124,))
     timer.daemon = True
     timer.start()
-    print(json.dumps(respond(json.loads(base64.b64decode(sys.argv[1]))), ensure_ascii=True))
+    try:
+        result = respond(request, sys.stdout.buffer)
+    except StreamInterrupted as error:
+        sys.stderr.write(str(error)[:200])
+        os._exit(3)
+    if result is not None:
+        print(json.dumps(result, ensure_ascii=True), flush=True)

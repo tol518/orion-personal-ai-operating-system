@@ -1,6 +1,8 @@
 """Deterministic junction swaps through the Windows handle-relative boundary. Runs on Windows only."""
 
 import base64
+import io
+import json
 import ctypes
 import importlib.util
 import os
@@ -42,9 +44,21 @@ class BoundaryTests(unittest.TestCase):
                 "path": path if path is not None else ("branch" if operation == "list" else "branch/inside.txt"),
                 "offset": 0, "length": 64}
 
+    def respond(self, request):
+        if request["operation"] != "stream":
+            return worker.respond(request)
+        out = io.BytesIO()
+        result = worker.respond(request, out)
+        if result is not None:
+            return result
+        header, _, data = out.getvalue().partition(b"\n")
+        return {**json.loads(header), "data": data}
+
     def assert_inside(self, operation, result):
         self.assertTrue(result["ok"], result)
-        if operation == "read":
+        if operation == "stream":
+            self.assertEqual(result["data"], b"inside")
+        elif operation == "read":
             self.assertEqual(base64.b64decode(result["base64"]), b"inside")
         elif operation == "stat":
             self.assertEqual(result["sizeBytes"], 6)
@@ -72,7 +86,7 @@ class BoundaryTests(unittest.TestCase):
             return handle
 
         with patch.object(worker, "nt_open", adversarial_open):
-            result = worker.respond(self.request(operation))
+            result = self.respond(self.request(operation))
         self.assertTrue(swapped)
         if before:
             self.assertFalse(result["ok"], result)
@@ -83,7 +97,7 @@ class BoundaryTests(unittest.TestCase):
     def test_swaps_before_and_after_each_open_cannot_escape(self):
         for root in (False, True):
             for before in (False, True):
-                for operation in ("list", "stat", "read"):
+                for operation in ("list", "stat", "read", "stream"):
                     with self.subTest(root=root, before=before, operation=operation):
                         case = BoundaryTests()
                         case.setUp()
@@ -173,6 +187,25 @@ class BoundaryTests(unittest.TestCase):
             self.assert_inside("list", worker.respond(self.request("list")))
             self.assertEqual(worker.respond(self.request("read", "branch/missing.txt"))["statusCode"], 404)
         self.assertLessEqual(handles(), before + 2)
+
+
+    def test_streams_send_one_header_then_raw_bytes_and_stop_when_the_file_changes(self):
+        request = self.request("stream")
+        self.assert_inside("stream", self.respond(request))
+        self.assertEqual(self.respond({**request, "offset": 2, "length": 3})["data"], b"sid")
+        self.assertEqual(worker.respond(request)["statusCode"], 400, "a stream needs somewhere to go")
+        self.assertEqual(self.respond({**request, "revision": "stale"})["statusCode"], 409)
+        original = worker.read_at
+
+        def changing(*args):
+            data = original(*args)
+            with open(self.branch / "inside.txt", "ab") as file:
+                file.write(b"!")
+            return data
+
+        with patch.object(worker, "read_at", changing):
+            with self.assertRaises(worker.StreamInterrupted):
+                worker.respond(request, io.BytesIO())
 
 
 if __name__ == "__main__":
