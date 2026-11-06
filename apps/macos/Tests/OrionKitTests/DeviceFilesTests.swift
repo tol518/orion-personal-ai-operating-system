@@ -33,17 +33,51 @@ final class DeviceFilesTests: XCTestCase {
     func testOnlyTheDroppedFilesRootIsWritable() throws {
         let roots = try JSONDecoder().decode(FileRootsResponse.self, from: Data(#"{"roots":[{"id":"orion-drops","label":"Dropped files","writable":true},{"id":"home","label":"Home"}]}"#.utf8))
         XCTAssertEqual(roots.roots.map(\.writable), [true, false])
-        let dropped = try JSONDecoder().decode(DroppedFile.self, from: Data(#"{"ok":true,"rootId":"orion-drops","name":"notes (2).txt","sizeBytes":12}"#.utf8))
+        let dropped = try JSONDecoder().decode(DroppedFile.self, from: Data(#"{"ok":true,"rootId":"orion-drops","path":"Photos/notes (2).txt","name":"notes (2).txt","sizeBytes":12}"#.utf8))
         XCTAssertEqual(dropped.name, "notes (2).txt")
     }
 
-    func testDropPathCarriesOnlyTheFileNameAndAlwaysTargetsTheServer() throws {
-        let path = DeviceFileRequest.drop(name: "a + b & c #1.pdf")
+    func testDropPathCarriesOnlyTheRelativePathAndAlwaysTargetsTheServer() throws {
+        let path = DeviceFileRequest.drop(path: "Photos/a + b & c #1.pdf")
         let components = try XCTUnwrap(URLComponents(string: path))
         XCTAssertEqual(components.path, "files/local/drops")
-        XCTAssertEqual(components.queryItems, [URLQueryItem(name: "name", value: "a + b & c #1.pdf")])
+        XCTAssertEqual(components.queryItems, [URLQueryItem(name: "path", value: "Photos/a + b & c #1.pdf")])
         XCTAssertTrue(path.contains("%2B"), "a plus must survive the server's form-query decoder")
         XCTAssertNil(components.fragment)
+        XCTAssertEqual(URLComponents(string: DeviceFileRequest.drop(path: "Photos", folder: true))?.path, "files/local/drops/folders")
+    }
+
+    func testAFolderPlanKeepsStructureAndLeavesHiddenFilesAndLinksBehind() throws {
+        let fileManager = FileManager.default
+        let base = fileManager.temporaryDirectory.appendingPathComponent("orion-plan-\(UUID().uuidString)")
+        let photos = base.appendingPathComponent("Photos")
+        try fileManager.createDirectory(at: photos.appendingPathComponent("Trips/Empty"), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: photos.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: base) }
+        try Data("sand".utf8).write(to: photos.appendingPathComponent("Trips/beach.jpg"))
+        try Data().write(to: photos.appendingPathComponent(".DS_Store"))
+        try Data("secret".utf8).write(to: photos.appendingPathComponent(".git/config"))
+        try fileManager.createSymbolicLink(at: photos.appendingPathComponent("home"), withDestinationURL: fileManager.homeDirectoryForCurrentUser)
+        let other = base.appendingPathComponent("Other/Photos")
+        try fileManager.createDirectory(at: other, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: other.appendingPathComponent("x.txt"))
+        let note = base.appendingPathComponent("note.txt")
+        try Data("n".utf8).write(to: note)
+
+        let plan = try DropPlan.make([photos, note, other, base.appendingPathComponent("missing")])
+        XCTAssertEqual(plan.folders.sorted(), ["Photos", "Photos (2)", "Photos/Trips", "Photos/Trips/Empty"])
+        XCTAssertEqual(plan.files.map(\.path).sorted(), ["Photos (2)/x.txt", "Photos/Trips/beach.jpg", "note.txt"])
+        XCTAssertEqual(plan.skipped, 4, ".DS_Store, .git, the link, and the missing item")
+    }
+
+    func testAFolderOverTheLimitIsRefusedBeforeAnythingIsSent() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("orion-plan-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        for index in 0...DropPlan.fileLimit {
+            FileManager.default.createFile(atPath: base.appendingPathComponent("\(index).txt").path, contents: nil)
+        }
+        XCTAssertThrowsError(try DropPlan.make([base]))
     }
 
     func testDeviceSpecificErrorsAreNotMisreportedAsPairingProblems() {
@@ -103,6 +137,36 @@ final class DeviceFileIntegrationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: preview), try Data(contentsOf: original))
     }
 
+    func testDroppingAFolderKeepsItsStructureAndRemovesAsAWhole() async throws {
+        let client = try await client()
+        defer { Task { try? await client.unpair() } }
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("orion-drop-\(UUID().uuidString)")
+        let name = "Project \(UUID().uuidString.prefix(8))"
+        let folder = base.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("src/empty"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        try Data("print(1)".utf8).write(to: folder.appendingPathComponent("src/main.py"))
+        try Data("# Readme".utf8).write(to: folder.appendingPathComponent("README.md"))
+        try Data("x".utf8).write(to: folder.appendingPathComponent(".env"))
+        let browser = FileBrowserStore(client: client)
+        await browser.refreshDevices()
+        await browser.drop([folder])
+        XCTAssertNil(browser.error)
+        XCTAssertEqual(browser.dropMessage, "Sent 2 of 2 files to Orion. Folders keep their structure. Hidden files and links were left on this Mac.")
+        let dropped = try XCTUnwrap(browser.entries.first { $0.name == name && $0.isDirectory })
+        await browser.open(root: browser.rootId, path: "\(name)/src")
+        XCTAssertEqual(browser.entries.map(\.name), ["empty", "main.py"])
+        await browser.open(root: browser.rootId, path: "")
+        await browser.drop([folder])
+        XCTAssertTrue(browser.entries.contains { $0.name == "\(name) (2)" }, "a second drop never merges into the first")
+        await browser.removeDropped(dropped)
+        await browser.removeDropped(try XCTUnwrap(browser.entries.first { $0.name == "\(name) (2)" }))
+        XCTAssertNil(browser.error)
+        XCTAssertFalse(browser.entries.contains { $0.name.hasPrefix(name) })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("src/main.py").path), "the originals stay")
+        browser.stop()
+    }
+
     func testDroppingSendsOnlyChosenFilesShowsThemAndCanTakeThemBack() async throws {
         let client = try await client()
         defer { Task { try? await client.unpair() } }
@@ -114,12 +178,11 @@ final class DeviceFileIntegrationTests: XCTestCase {
         try Data("chosen on this Mac".utf8).write(to: chosen)
         let browser = FileBrowserStore(client: client)
         await browser.refreshDevices()
-        await browser.drop([chosen, directory.appendingPathComponent("Folder")])
+        await browser.drop([chosen])
         XCTAssertNil(browser.error)
-        XCTAssertEqual(browser.dropMessage, "Sent 1 of 1 to Orion. Folders were skipped.")
+        XCTAssertEqual(browser.dropMessage, "Sent 1 of 1 files to Orion.")
         XCTAssertTrue(browser.showingDrops, "the browser shows where the file went")
         let dropped = try XCTUnwrap(browser.entries.first { $0.name == name })
-        XCTAssertFalse(browser.entries.contains { $0.name == "Folder" })
         let info = try await client.fileInfo(deviceId: "local", root: browser.rootId, path: name, revision: dropped.revision)
         let copy = try await client.downloadFile(deviceId: "local", root: browser.rootId, path: name, info: info, preview: false)
         defer { try? FileManager.default.removeItem(at: copy.deletingLastPathComponent()) }

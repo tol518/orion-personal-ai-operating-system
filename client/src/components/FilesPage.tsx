@@ -7,6 +7,7 @@ import {
   File,
   FileText,
   Folder,
+  FolderUp,
   FolderOpen,
   HardDrive,
   Image,
@@ -21,6 +22,8 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { dropSource, pickedPlan } from "../lib/drop-plan";
+import type { DropPlan } from "../lib/drop-plan";
 import type { DeviceFile, FileDevice, FileInfo, FileListing, FileRoot } from "../lib/file-types";
 import "./FilesPage.css";
 
@@ -38,18 +41,6 @@ function childPath(parent: string, name: string) {
   return parent ? `${parent}/${name}` : name;
 }
 
-/** Only individual files: a dropped folder would send everything inside it. */
-function droppedFiles(event: DragEvent) {
-  const items = [...event.dataTransfer.items];
-  const files = items.length
-    ? items
-        .filter((item) => item.kind === "file" && !item.webkitGetAsEntry?.()?.isDirectory)
-        .map((item) => item.getAsFile())
-        .filter((file): file is globalThis.File => Boolean(file))
-    : [...event.dataTransfer.files];
-  return { files, skipped: (items.length || event.dataTransfer.files.length) - files.length };
-}
-
 export default function FilesPage() {
   const [devices, setDevices] = useState<FileDevice[]>([]);
   const [deviceId, setDeviceId] = useState("local");
@@ -61,26 +52,63 @@ export default function FilesPage() {
   const [sendNote, setSendNote] = useState<string | null>(null);
   const [showDrops, setShowDrops] = useState(0);
   const picker = useRef<HTMLInputElement>(null);
+  const folderPicker = useRef<HTMLInputElement>(null);
 
-  async function send(files: globalThis.File[], skipped = 0) {
-    if (sending || !files.length) {
-      if (skipped) setSendNote("Only files can be sent to Orion, not folders.");
+  async function send(planned: () => Promise<DropPlan> | DropPlan) {
+    if (sending) return;
+    let plan: DropPlan;
+    try {
+      setSending("Reading what you chose...");
+      plan = await planned();
+    } catch (failure) {
+      setSending(null);
+      setSendNote(errorMessage(failure));
+      return;
+    }
+    if (!plan.files.length && !plan.folders.length) {
+      setSending(null);
+      setSendNote("Nothing to send: hidden files stay on your computer.");
       return;
     }
     const failures: string[] = [];
-    for (const [index, file] of files.entries()) {
-      setSending(`Sending ${file.name} (${index + 1} of ${files.length})...`);
+    // A chosen folder may get a new name on Orion ("Photos (2)"); its contents follow it.
+    const placed = new Map<string, string>();
+    const failedFolders = new Set<string>();
+    const onOrion = (path: string) => {
+      const top = path.split("/")[0];
+      if (failedFolders.has(top)) return null;
+      return (placed.get(top) ?? top) + path.slice(top.length);
+    };
+    for (const folder of plan.folders) {
+      const nested = folder.includes("/");
+      const target = onOrion(folder);
+      if (target === null) continue;
       try {
-        await api.dropFile(file);
+        const created = await api.createDropFolder(target);
+        if (!nested) placed.set(folder, created.path);
       } catch (failure) {
-        failures.push(`${file.name}: ${errorMessage(failure)}`);
+        if (!nested) failedFolders.add(folder);
+        failures.push(`${folder}: ${errorMessage(failure)}`);
+      }
+    }
+    let sent = 0;
+    for (const [index, { file, path }] of plan.files.entries()) {
+      const target = onOrion(path);
+      if (target === null) continue;
+      setSending(`Sending ${index + 1} of ${plan.files.length}: ${path}`);
+      try {
+        await api.dropFile(file, target);
+        sent += 1;
+      } catch (failure) {
+        failures.push(`${path}: ${errorMessage(failure)}`);
       }
     }
     setSending(null);
     setSendNote(
       [
-        `Sent ${files.length - failures.length} of ${files.length} to Orion.`,
-        skipped ? "Folders were skipped." : "",
+        `Sent ${sent} of ${plan.files.length} files to Orion.`,
+        plan.folders.length ? "Folders keep their structure." : "",
+        plan.skipped ? "Hidden files were left on your computer." : "",
         ...failures,
       ]
         .filter(Boolean)
@@ -130,15 +158,15 @@ export default function FilesPage() {
         if (!accepts(event)) return;
         event.preventDefault();
         setDragging(false);
-        const { files, skipped } = droppedFiles(event);
-        void send(files, skipped);
+        // Taken now: the browser lets go of the dropped items once this handler returns.
+        void send(dropSource(event.dataTransfer));
       }}
     >
       {dragging && (
         <div className="files-dropzone" aria-hidden="true">
           <Upload size={28} />
           <strong>Drop to send to Orion's Dropped files</strong>
-          <span>Only the files you drop are copied. Folders are skipped.</span>
+          <span>Files and folders. Hidden files stay on your computer.</span>
         </div>
       )}
       <header className="files-heading">
@@ -154,8 +182,21 @@ export default function FilesPage() {
             multiple
             hidden
             onChange={(event) => {
-              void send([...(event.target.files ?? [])]);
+              const files = [...(event.target.files ?? [])];
               event.target.value = "";
+              void send(() => pickedPlan(files));
+            }}
+          />
+          <input
+            ref={folderPicker}
+            type="file"
+            hidden
+            // Non-standard but supported by every current browser: pick one whole folder.
+            {...{ webkitdirectory: "" }}
+            onChange={(event) => {
+              const files = [...(event.target.files ?? [])];
+              event.target.value = "";
+              void send(() => pickedPlan(files));
             }}
           />
           <button
@@ -163,7 +204,14 @@ export default function FilesPage() {
             disabled={Boolean(sending)}
             onClick={() => picker.current?.click()}
           >
-            <Upload size={15} /> Send files to Orion
+            <Upload size={15} /> Send files
+          </button>
+          <button
+            className="files-button"
+            disabled={Boolean(sending)}
+            onClick={() => folderPicker.current?.click()}
+          >
+            <FolderUp size={15} /> Send a folder
           </button>
           <button className="files-button" onClick={() => setRefresh((value) => value + 1)}>
             <RefreshCw size={15} /> Refresh devices
@@ -227,7 +275,8 @@ export default function FilesPage() {
         <ShieldCheck size={16} />
         <span>
           Read-only access to shared folders. Files stay on their device until you preview or
-          download them. Dropped files are copies you chose to send to the Orion server.
+          download them. Dropped files holds copies of files and folders you chose to send to the
+          Orion server.
         </span>
       </footer>
     </section>
@@ -320,11 +369,14 @@ function DeviceWorkspace({ device, showDrops }: { device: FileDevice; showDrops:
       </div>
     );
   const root = roots.find(({ id }) => id === rootId);
-  const removeDropped = async (name: string) => {
-    if (!window.confirm(`Remove ${name} from Orion? The copy on the Orion server is deleted; the original stays on your computer.`))
-      return;
+  const removeDropped = async (entry: DeviceFile) => {
+    const question =
+      entry.kind === "directory"
+        ? `Remove the folder ${entry.name} and everything in it from Orion? Originals stay on your computer.`
+        : `Remove ${entry.name} from Orion? The copy on the Orion server is deleted; the original stays on your computer.`;
+    if (!window.confirm(question)) return;
     try {
-      await api.removeDroppedFile(name);
+      await api.removeDropped(childPath(path, entry.name));
       setRefresh((value) => value + 1);
     } catch (failure) {
       setError(errorMessage(failure));
@@ -458,11 +510,11 @@ function DeviceWorkspace({ device, showDrops }: { device: FileDevice; showDrops:
                         </td>
                         <td>{new Date(entry.modifiedAt).toLocaleDateString()}</td>
                         <td>
-                          {entry.kind === "file" && root?.writable && (
+                          {root?.writable && (
                             <button
                               className="files-icon-button"
                               aria-label={`Remove ${entry.name} from Orion`}
-                              onClick={() => void removeDropped(entry.name)}
+                              onClick={() => void removeDropped(entry)}
                             >
                               <Trash2 size={16} />
                             </button>

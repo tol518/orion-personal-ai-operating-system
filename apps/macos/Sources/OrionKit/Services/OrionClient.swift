@@ -272,10 +272,10 @@ public actor OrionClient {
         }
     }
 
-    /// Sends one file the person chose to the Orion server's Dropped files. URLSession streams it
-    /// from disk, and nothing else on this Mac is shared.
-    public func dropFile(_ file: URL) async throws -> DroppedFile {
-        var request = try authorizedRequest(path: DeviceFileRequest.drop(name: file.lastPathComponent), method: "POST", authenticated: true)
+    /// Sends one file the person chose to `path` in the Orion server's Dropped files. URLSession
+    /// streams it from disk, and nothing else on this Mac is shared.
+    public func dropFile(_ file: URL, path: String) async throws -> DroppedFile {
+        var request = try authorizedRequest(path: DeviceFileRequest.drop(path: path), method: "POST", authenticated: true)
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         let data: Data
         let response: URLResponse
@@ -295,9 +295,16 @@ public actor OrionClient {
         }
     }
 
-    /// Takes a dropped file back out of Orion. The original on this Mac is untouched.
-    public func removeDroppedFile(name: String) async throws {
-        _ = try await sendIgnoringResponse(DeviceFileRequest.drop(name: name), method: "DELETE")
+    /// Makes a folder in Dropped files and answers its name there: a second "Photos" becomes
+    /// "Photos (2)" rather than mixing into the first.
+    public func createDropFolder(path: String) async throws -> String {
+        let response: DroppedFolder = try await send(DeviceFileRequest.drop(path: path, folder: true), method: "POST")
+        return response.path
+    }
+
+    /// Takes a dropped file or folder back out of Orion. The original on this Mac is untouched.
+    public func removeDropped(path: String) async throws {
+        _ = try await sendIgnoringResponse(DeviceFileRequest.drop(path: path), method: "DELETE")
     }
 
     /// Token and cost usage over a range such as "7d" or "30d".

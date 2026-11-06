@@ -149,41 +149,76 @@ public final class FileBrowserStore {
         }
     }
 
-    /// Sends the files the person chose, one at a time, to the Orion server's Dropped files, then
-    /// shows them there. Folders are skipped: only individually chosen files leave this Mac.
+    /// Sends the files and folders the person chose to the Orion server's Dropped files, then shows
+    /// them there. A folder keeps its structure; hidden files and links inside it stay on this Mac.
     public func drop(_ urls: [URL]) async {
-        let files = urls.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
-        let skipped = urls.count - files.count
-        guard !files.isEmpty else {
-            error = "Only files can be sent to Orion, not folders."
+        let plan: DropPlan
+        do {
+            plan = try DropPlan.make(urls)
+        } catch {
+            self.error = error.localizedDescription
+            return
+        }
+        guard !plan.files.isEmpty || !plan.folders.isEmpty else {
+            error = "Nothing to send: hidden files and links stay on this Mac."
             return
         }
         dropping = true; error = nil
         defer { dropping = false }
         var failures: [String] = []
-        for (index, file) in files.enumerated() {
-            dropMessage = "Sending \(file.lastPathComponent) (\(index + 1) of \(files.count))..."
+        // A chosen folder may get a new name on Orion ("Photos (2)"); its contents follow it.
+        var placed: [String: String] = [:]
+        var failedFolders: Set<String> = []
+        func onOrion(_ path: String) -> String? {
+            let top = String(path.split(separator: "/", maxSplits: 1)[0])
+            guard !failedFolders.contains(top) else { return nil }
+            guard let name = placed[top] else { return path }
+            return name + path.dropFirst(top.count)
+        }
+        for folder in plan.folders {
             do {
-                _ = try await client.dropFile(file)
+                if !folder.contains("/") {
+                    placed[folder] = try await client.createDropFolder(path: folder)
+                } else if let path = onOrion(folder) {
+                    _ = try await client.createDropFolder(path: path)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                if !folder.contains("/") { failedFolders.insert(folder) }
+                failures.append("\(folder): \(error.localizedDescription)")
+            }
+        }
+        var sent = 0
+        for (index, file) in plan.files.enumerated() {
+            guard let path = onOrion(file.path) else { continue }
+            dropMessage = "Sending \(index + 1) of \(plan.files.count): \(file.path)"
+            do {
+                _ = try await client.dropFile(file.source, path: path)
+                sent += 1
             } catch is CancellationError {
                 break
             } catch {
-                failures.append("\(file.lastPathComponent): \(error.localizedDescription)")
+                failures.append("\(file.path): \(error.localizedDescription)")
             }
         }
-        let sent = files.count - failures.count
-        dropMessage = "Sent \(sent) of \(files.count) to Orion.\(skipped > 0 ? " Folders were skipped." : "")"
+        dropMessage = [
+            "Sent \(sent) of \(plan.files.count) files to Orion.",
+            plan.folders.isEmpty ? "" : "Folders keep their structure.",
+            plan.skipped > 0 ? "Hidden files and links were left on this Mac." : "",
+        ].filter { !$0.isEmpty }.joined(separator: " ")
         // Show where they went; opening a folder clears errors, so report failures after it.
         if deviceId != "local" { await selectDevice("local") }
         if let drops = roots.first(where: \.writable) { await open(root: drops.id, path: "") }
         if !failures.isEmpty { error = failures.joined(separator: "\n") }
     }
 
-    /// Removes a dropped file from Orion. The original on this Mac is untouched.
+    /// Removes a dropped file, or a dropped folder and everything in it, from Orion. The original
+    /// on this Mac is untouched.
     public func removeDropped(_ file: DeviceFile) async {
         guard showingDrops else { return }
         do {
-            try await client.removeDroppedFile(name: file.name)
+            try await client.removeDropped(path: entryPath(file))
             dropMessage = "Removed \(file.name) from Orion."
             await open(root: rootId, path: path, offset: offset)
         } catch {

@@ -5,7 +5,8 @@ Repository: [orion-personal-ai-operating-system](https://github.com/tol518/orion
 Orion's **Files** feature lets an authenticated user browse shared folders on the
 Orion server and supported paired computers, preview files, and download their
 original contents. It is available in both the web dashboard and native Mac app.
-It is read-only access, not whole-drive access or background synchronization.
+Shared folders are read-only. The one write is **Dropped files**: files and folders you choose
+to send to the Orion server. It is not whole-drive access or background synchronization.
 
 This document explains the feature and the security decisions made while adding
 it. For configuration, API details, and exact limits, see
@@ -18,13 +19,17 @@ it. For configuration, API details, and exact limits, see
 - Preview text, code, images, PDFs, and supported audio/video in the web dashboard.
 - Preview downloaded temporary copies with Quick Look in the Mac app.
 - Download original files using the browser download flow or the Mac Save dialog.
+- Send chosen files and folders to the Orion server's Dropped files by dragging them onto Files
+  or using the send buttons, and remove them again. Folders keep their structure; hidden files
+  inside them stay on your computer.
 
 Text, HTML, SVG, and scripts preview as inert text rather than executable content.
 Text previews are limited to the first 256 KiB; downloads contain the full file.
 Media playback depends on the client and its supported codecs.
 
-There is no Files API for uploading, editing, renaming, deleting, executing files,
-or synchronizing folders. Downloading does not automatically run an executable.
+Apart from Dropped files, there is no Files API for uploading, editing, renaming, deleting,
+executing files, or synchronizing folders. Uploads only ever land in the Orion server's own drop
+folder, never on a paired computer. Downloading does not automatically run an executable.
 
 ## How Computers Connect
 

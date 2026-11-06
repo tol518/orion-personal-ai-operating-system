@@ -2,8 +2,8 @@
 
 The **Files** view is available in the web dashboard and native Mac app. It browses the Orion
 server and paired OpenClaw computers, previews supported files, and downloads originals. Shared
-folders are read-only. The one write is **Dropped files**: copies of files you choose to send to
-the Orion server from the Mac app or web dashboard. There is no rename, background
+folders are read-only. The one write is **Dropped files**: copies of files and folders you choose
+to send to the Orion server from the Mac app or web dashboard. There is no rename, background
 synchronization, or agent execution, and nothing is deleted except a dropped copy you remove.
 
 ## Connect a computer
@@ -76,15 +76,25 @@ configuration fails startup rather than silently enabling a different share.
 
 ## Dropped files
 
-Send selected files from any client to the Orion server: drag them onto the Files view in the Mac
-app or web dashboard, or use **Send Files to Orion**. Only the files you choose are copied; dropped
-folders are skipped, and nothing else on the sending computer becomes visible. Files then appears
-open at **Dropped files**, listed last among the Orion server's folders, where every client can
-preview and download them. Removing one deletes the server's copy only; the original stays where
-it was.
+Send selected files and folders from any client to the Orion server: drag them onto the Files
+view in the Mac app or web dashboard, or use **Send Files to Orion** in the Mac app (files or
+folders) or **Send files** and **Send a folder** in the web dashboard. Only what you choose is
+copied, and nothing else on the sending computer becomes visible. Files then appears open at
+**Dropped files**, listed last among the Orion server's folders, where every client can preview
+and download them. Removing a file or folder deletes the server's copy only; the original stays
+where it was.
+
+A folder keeps its structure, including empty subfolders (the web folder picker cannot see empty
+ones; dragging can). Hidden files and folders inside it (`.git`, `.env`, `.DS_Store`) stay on the
+sending computer, and the Mac app never follows a link inside a folder, since it could point
+anywhere on the Mac. Dropping a folder whose name is already taken creates `Photos (2)` instead of
+mixing the two. One drop may carry at most 5,000 files, checked before anything is sent; folders
+can be up to 32 levels deep.
 
 Each file is streamed to a hidden temporary name in the drop folder and then given its own name,
-never replacing an existing file (a repeat becomes `name (2).ext`). A name starting with a dot is
+never replacing an existing file (a repeat becomes `name (2).ext`). Every level of a dropped
+folder must be a real folder inside the drop folder: a link planted there is refused, never
+followed, for uploads and removals alike. A name starting with a dot is
 refused because Files would hide it, and characters the reader refuses (`/`, `\`, `:`, control
 characters) become dashes. Files are stored with owner-only permissions and are read back
 through the same hardened helper as every other shared folder. Uploads require the dashboard
@@ -191,8 +201,9 @@ The following routes exist under both prefixes:
 | `GET /:deviceId/list?root=id&path=relative&offset=0`          | Entries, `nextOffset`, and `scanTruncated`.                                         |
 | `GET /:deviceId/stat?root=id&path=relative&revision=value`    | File metadata, MIME type, and preview kind.                                         |
 | `GET /:deviceId/content?root=id&path=relative&revision=value` | Original bytes; supports `Range` and `HEAD`.                                        |
-| `POST /local/drops?name=file`                                 | Body is one file's raw bytes with `Content-Length`; answers the stored name.         |
-| `DELETE /local/drops?name=file`                               | Removes one dropped file from the Orion server.                                     |
+| `POST /local/drops?path=folder/file`                          | Body is one file's raw bytes with `Content-Length`; answers the stored path.         |
+| `POST /local/drops/folders?path=folder`                       | Makes a dropped folder; a taken top-level name comes back as `name (2)`.            |
+| `DELETE /local/drops?path=folder/file`                        | Removes one dropped file, or a dropped folder and everything in it.                 |
 
 `preview=1` bounds text previews; `download=1` forces attachment disposition. File locations
 consist of device ID, root ID, and a slash-separated relative path. No route writes to a source
