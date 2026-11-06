@@ -24,6 +24,8 @@ private struct DeviceFilesWorkspace: View {
     @Bindable var browser: FileBrowserStore
     @State private var selection: String?
     @State private var search = ""
+    @State private var dropTargeted = false
+    @State private var removing: DeviceFile?
 
     private var selectedFile: DeviceFile? { browser.entries.first { $0.name == selection } }
     private var visibleFiles: [DeviceFile] {
@@ -60,7 +62,38 @@ private struct DeviceFilesWorkspace: View {
             if browser.transferFileName != name { browser.cancelTransfer() }
         }
         .toolbar {
+            Button("Send Files to Orion...", systemImage: "square.and.arrow.up") { chooseFilesToSend() }
+                .help("Choose files on this Mac to copy into the Orion server's Dropped files")
+                .disabled(browser.dropping)
             Button("Refresh devices", systemImage: "arrow.clockwise") { Task { await browser.refreshDevices() } }
+        }
+        // Only the files dropped here leave this Mac; nothing else on it is shared.
+        .dropDestination(for: URL.self) { urls, _ in
+            guard !browser.dropping else { return false }
+            Task { await browser.drop(urls) }
+            return true
+        } isTargeted: { dropTargeted = $0 }
+        .overlay {
+            if dropTargeted {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 3, dash: [8]))
+                    .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .overlay {
+                        Label("Drop to send to Orion's Dropped files", systemImage: "tray.and.arrow.down")
+                            .font(.title3.weight(.semibold))
+                    }
+                    .padding(8)
+                    .allowsHitTesting(false)
+            }
+        }
+        .confirmationDialog(
+            "Remove \(removing?.name ?? "this file") from Orion?",
+            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+            presenting: removing
+        ) { file in
+            Button("Remove from Orion", role: .destructive) { Task { await browser.removeDropped(file) } }
+        } message: { _ in
+            Text("The copy on the Orion server is deleted. The original on this Mac stays where it is.")
         }
     }
 
@@ -127,6 +160,9 @@ private struct DeviceFilesWorkspace: View {
                 .contextMenu {
                     Button(file.isDirectory ? "Open folder" : "Preview") { open(file) }
                     if !file.isDirectory { Button("Download...") { save(file) } }
+                    if browser.showingDrops && !file.isDirectory {
+                        Button("Remove from Orion...", role: .destructive) { removing = file }
+                    }
                 }
                 .onTapGesture(count: 2) { open(file) }
             }
@@ -148,6 +184,9 @@ private struct DeviceFilesWorkspace: View {
                         .keyboardShortcut(.space, modifiers: []).disabled(browser.transferring)
                     Button("Download...", systemImage: "arrow.down.circle") { save(file) }
                         .disabled(browser.transferring)
+                    if browser.showingDrops {
+                        Button("Remove from Orion...", systemImage: "trash", role: .destructive) { removing = file }
+                    }
                 }
             } else {
                 Label("Select a file", systemImage: "doc.viewfinder").foregroundStyle(.secondary).padding(.top)
@@ -159,7 +198,11 @@ private struct DeviceFilesWorkspace: View {
             }
             if let message = browser.transferMessage { Text(message).font(.caption).foregroundStyle(.secondary) }
             Spacer()
-            Label("Read-only shared folders", systemImage: "lock.shield").font(.caption).foregroundStyle(.secondary)
+            if browser.showingDrops {
+                Label("Copies you sent to Orion", systemImage: "tray.and.arrow.down").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Label("Read-only shared folders", systemImage: "lock.shield").font(.caption).foregroundStyle(.secondary)
+            }
         }
         .padding()
     }
@@ -169,6 +212,8 @@ private struct DeviceFilesWorkspace: View {
             Text("\(browser.entries.count) items on page \(browser.offset / 100 + 1)").font(.caption).foregroundStyle(.secondary)
             if browser.scanTruncated { Text("First 5,000 entries").font(.caption).foregroundStyle(.secondary) }
             Spacer()
+            if browser.dropping { ProgressView().controlSize(.small) }
+            if let message = browser.dropMessage { Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             Button("Previous") { Task { await browser.open(root: browser.rootId, path: browser.path, offset: max(0, browser.offset - 100)) } }.disabled(browser.offset == 0 || browser.loading)
             Button("Next") { Task { await browser.open(root: browser.rootId, path: browser.path, offset: browser.nextOffset ?? 0) } }.disabled(browser.nextOffset == nil || browser.loading)
         }
@@ -178,6 +223,21 @@ private struct DeviceFilesWorkspace: View {
     private func open(_ file: DeviceFile) {
         if file.isDirectory { Task { await browser.open(root: browser.rootId, path: browser.entryPath(file)) } }
         else { selection = file.name; browser.preview(file) }
+    }
+
+    private func chooseFilesToSend() {
+        // An open panel grants access to exactly the files chosen, and nothing else on this Mac.
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Send to Orion"
+        panel.message = "Choose files to copy into the Orion server's Dropped files."
+        panel.begin { response in
+            guard response == .OK else { return }
+            let urls = panel.urls
+            Task { await browser.drop(urls) }
+        }
     }
 
     private func save(_ file: DeviceFile) {

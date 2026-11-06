@@ -51,7 +51,8 @@ The Files endpoint deliberately makes configured shared-folder content available
 clients on request. File metadata, downloads, and temporary native previews are Class D material,
 not source or runtime backups. Do not add them, real shared-root paths, or node mappings to Git.
 Only explicitly requested previews/downloads reach the Mac; no folder is synchronized in the
-background. See [Files across devices](../device-files.md) for the read-only access contract.
+background. See [Files across devices](../device-files.md) for the access contract. Dropped files
+are private user content stored under `server/data/` and are never committed.
 
 ## Enforcement
 

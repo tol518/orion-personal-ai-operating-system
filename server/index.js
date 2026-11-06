@@ -9,7 +9,8 @@ import { createHash, randomUUID } from "node:crypto";
 import express from "express";
 import dotenv from "dotenv";
 import { GatewayClient } from "./gateway.js";
-import { DeviceFiles, parseFileRoots, parseStreamUrl } from "./device-files.js";
+import { DeviceFiles, LONGEST_UPLOAD_MS, parseFileRoots, parseStreamUrl } from "./device-files.js";
+import { FileDrops, parseDropLimit } from "./file-drops.js";
 import { createDeviceFilesApi, createNodeFilesApi } from "./device-files-api.js";
 import { loadOrionPlugins, parseOrionPluginPaths } from "./orion-plugin-runtime.js";
 import { DesktopAccess } from "./desktop-access.js";
@@ -196,6 +197,11 @@ const deviceFiles = new DeviceFiles({
   gateway,
   roots: parseFileRoots(process.env.ORION_FILE_ROOTS_JSON),
   streamUrl: parseStreamUrl(process.env.ORION_NODE_STREAM_URL),
+  // Files chosen on a client and dropped onto the server: shared as "Dropped files" on this device.
+  drops: new FileDrops({
+    directory: process.env.ORION_DROP_DIR || path.join(__dirname, "data", "dropped-files"),
+    maxBytes: parseDropLimit(process.env.ORION_DROP_MAX_MB),
+  }),
 });
 gateway.start();
 const windowsScreen = new WindowsScreenBridge({
@@ -2596,6 +2602,9 @@ const httpServer = app.listen(PORT, HOST, () => {
   extractionTasks.recoverInterruptedRuns();
   extractionScheduler.start();
 });
+// Node drops a request body still arriving after five minutes. A film streamed from a paired
+// computer, or a large dropped file, can legitimately take longer; headers still time out at 60 s.
+httpServer.requestTimeout = LONGEST_UPLOAD_MS;
 
 /** Undefined when unset or unusable, so the owning service's default stays authoritative. */
 function optionalEnvInt(name) {

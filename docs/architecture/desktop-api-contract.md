@@ -83,7 +83,7 @@ client key (5 attempts / 5 minutes) by the same logic the existing access gates 
 | `POST /api/v1/desktop/chat` | the BFF's existing `submitChatTurn` path | Delegates to the *same* function `/api/chat` uses, so memory retrieval, execution policy, attachment grants, and safety behavior are identical. The desktop app does not re-implement any of it. |
 | `GET /api/v1/desktop/events` | the existing SSE fan-out | Registers with the same `broadcast()` used by `/api/events`, filtered to a desktop event allowlist. One event model, not two. |
 | `GET /api/v1/desktop/nodes` | gateway `node.list` | Read-only in V1, projected to `DesktopNodeSummary`. No shadow node registry. |
-| `GET /api/v1/desktop/files/*` | shared `DeviceFiles` service and fixed node worker | Authenticated device discovery, shared-root listing, metadata, preview, and range/download reads. No arbitrary path or command input; details in [Files across devices](../device-files.md). |
+| `GET /api/v1/desktop/files/*` | shared `DeviceFiles` service and fixed node worker | Authenticated device discovery, shared-root listing, metadata, preview, and range/download reads, plus sending a chosen file to (or removing it from) the server's Dropped files. No arbitrary path or command input; details in [Files across devices](../device-files.md). |
 | `GET /api/v1/desktop/remote-access` | `server/remote-access.js` | Which native remote-desktop service is reachable per node, and at what address. Discovery only. |
 | `POST /api/v1/desktop/remote-access/:nodeId/session` | `server/remote-access.js` | Records that a session was opened and returns host, port, and scheme. |
 | `GET /api/v1/desktop/remote-access/audit` | `server/remote-access.js` | Remote-session audit events: actor, node, service, time. |

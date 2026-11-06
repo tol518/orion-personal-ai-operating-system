@@ -16,6 +16,7 @@ import {
   TEXT_PREVIEW_BYTES,
 } from "./device-files.js";
 import { createDeviceFilesApi, createNodeFilesApi } from "./device-files-api.js";
+import { DROP_ROOT_ID, FileDrops, dropName, parseDropLimit } from "./file-drops.js";
 import { createBrowserAuth } from "./browser-auth.js";
 import { createDesktopApi } from "./desktop-api.js";
 import { DesktopAccess } from "./desktop-access.js";
@@ -312,7 +313,8 @@ test("revocation and cancellation stop subsequent transfer chunks", async (t) =>
 async function httpFixture(t) {
   const fixtureData = await fixture(t);
   const gateway = { request: async () => ({ nodes: [] }), status: () => ({ connected: true }) };
-  const files = new DeviceFiles({ gateway, roots: { local: fixtureData.roots } });
+  const drops = new FileDrops({ directory: path.join(fixtureData.root, "dropped"), maxBytes: 1_000_000 });
+  const files = new DeviceFiles({ gateway, roots: { local: fixtureData.roots }, drops });
   const auth = createBrowserAuth({ password: "test-dashboard-password", port: 4820 });
   const access = new DesktopAccess({ pairingSecret: "test-pairing-secret" });
   const app = express();
@@ -337,7 +339,7 @@ async function httpFixture(t) {
     body: JSON.stringify({ password: "test-dashboard-password" }),
   });
   const headers = { Cookie: response.headers.get("set-cookie").split(";")[0] };
-  return { ...fixtureData, base, headers, access };
+  return { ...fixtureData, base, headers, access, drops };
 }
 test("browser and desktop file routes reject unauthenticated access", async (t) => {
   const { base } = await httpFixture(t);
@@ -542,4 +544,88 @@ test("local downloads stream from one helper run and a closed browser stops it",
   controller.abort();
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.deepEqual(Buffer.from(await (await fetch(url, { headers: { Range: "bytes=0-9" } })).arrayBuffer()), bytes.subarray(0, 10));
+});
+
+test("dropped-file names stay openable and visible, and the size limit is configurable", () => {
+  assert.equal(dropName("Report: Q3/final\\v2.pdf"), "Report- Q3-final-v2.pdf");
+  assert.equal(dropName("  café.txt "), "café.txt");
+  for (const name of [".env", "", "..", "x".repeat(256), undefined])
+    assert.throws(() => dropName(name), { statusCode: 400 }, String(name));
+  assert.equal(parseDropLimit(""), 2 * 1024 ** 3);
+  assert.equal(parseDropLimit("10"), 10 * 1024 * 1024);
+  assert.throws(() => parseDropLimit("lots"), /ORION_DROP_MAX_MB/);
+});
+test("selected files dropped from a client appear as the server's Dropped files and can be taken back", async (t) => {
+  const { base, headers, drops, access, shared } = await httpFixture(t);
+  const drop = (name, body, extra = {}) =>
+    fetch(`${base}/api/files/local/drops?name=${encodeURIComponent(name)}`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/octet-stream", ...extra },
+      body,
+    });
+  assert.equal((await fetch(`${base}/api/files/local/drops?name=x.txt`, { method: "POST", body: "x" })).status, 401);
+  const first = await drop("notes.txt", "from the MacBook");
+  assert.equal(first.status, 201);
+  assert.deepEqual(await first.json(), { ok: true, rootId: DROP_ROOT_ID, name: "notes.txt", sizeBytes: 16 });
+  assert.equal((await (await drop("notes.txt", "second")).json()).name, "notes (2).txt", "never overwrites");
+  const roots = await (await fetch(`${base}/api/files/local/roots`, { headers })).json();
+  assert.deepEqual(roots.roots.at(-1), { id: DROP_ROOT_ID, label: "Dropped files", writable: true });
+  assert.equal(roots.roots[0].id, "docs", "shared folders still open first");
+  assert.ok(!JSON.stringify(roots).includes(drops.directory), "the folder's path stays on the server");
+  const listing = await (await fetch(`${base}/api/files/local/list?root=${DROP_ROOT_ID}`, { headers })).json();
+  assert.deepEqual(listing.entries.map((entry) => entry.name), ["notes (2).txt", "notes.txt"]);
+  const content = await fetch(`${base}/api/files/local/content?root=${DROP_ROOT_ID}&path=notes.txt`, { headers });
+  assert.equal(await content.text(), "from the MacBook");
+  assert.equal((await drop(".env", "secret")).status, 400);
+  assert.equal((await drop("big.bin", Buffer.alloc(1_000_001))).status, 413);
+  assert.equal((await fetch(`${base}/api/files/other-pc/drops?name=a.txt`, { method: "POST", headers, body: "a" })).status, 404);
+  const removed = await fetch(`${base}/api/files/local/drops?name=notes.txt`, { method: "DELETE", headers });
+  assert.equal(removed.status, 200);
+  assert.equal((await fetch(`${base}/api/files/local/drops?name=notes.txt`, { method: "DELETE", headers })).status, 404);
+  for (const name of ["..%2Fshared%2Fhello.txt", "hello.txt"]) {
+    const refused = await fetch(`${base}/api/files/local/drops?name=${name}`, { method: "DELETE", headers });
+    assert.ok([400, 404].includes(refused.status), name);
+  }
+  assert.equal(await fs.readFile(path.join(shared, "hello.txt"), "utf8"), "Hello from a device.\n", "only dropped files can be removed");
+  assert.deepEqual((await fs.readdir(drops.directory)).sort(), ["notes (2).txt"], "no temporary files remain");
+  const pair = access.pair({ pairingSecret: "test-pairing-secret", clientId: "test-mac", clientName: "Test Mac", platform: "macos", clientKey: "local" });
+  const native = await fetch(`${base}/api/v1/desktop/files/local/drops?name=${encodeURIComponent("Photo 1.jpg")}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${pair.token}`, "Content-Type": "application/octet-stream" },
+    body: Buffer.from([1, 2, 3]),
+  });
+  assert.equal(native.status, 201);
+  const audit = JSON.stringify(access.audit());
+  assert.match(audit, /files\.drop/);
+  assert.ok(!audit.includes("Photo 1.jpg"), "the audit names the action, not the file");
+});
+test("an interrupted drop leaves nothing behind, and a restart clears stray uploads", async (t) => {
+  const { base, headers, drops } = await httpFixture(t);
+  const controller = new AbortController();
+  const body = new ReadableStream({
+    start(stream) {
+      stream.enqueue(new Uint8Array(1000));
+    },
+  });
+  const pending = fetch(`${base}/api/files/local/drops?name=partial.bin`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/octet-stream", "Content-Length": "5000" },
+    body,
+    duplex: "half",
+    signal: controller.signal,
+  }).catch(() => null);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  controller.abort();
+  await pending;
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(await fs.readdir(drops.directory), []);
+  await fs.writeFile(path.join(drops.directory, ".incoming-stale"), "x");
+  new FileDrops({ directory: drops.directory });
+  assert.deepEqual(await fs.readdir(drops.directory), []);
+});
+test("the server keeps a long upload open for as long as a stream may run", async () => {
+  const { LONGEST_UPLOAD_MS } = await import("./device-files.js");
+  assert.ok(LONGEST_UPLOAD_MS > 2 * 60 * 60 * 1000);
+  const source = await fs.readFile(new URL("./index.js", import.meta.url), "utf8");
+  assert.match(source, /^httpServer\.requestTimeout = LONGEST_UPLOAD_MS;$/m);
 });

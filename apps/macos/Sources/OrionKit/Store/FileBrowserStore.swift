@@ -18,6 +18,8 @@ public final class FileBrowserStore {
     public private(set) var transferring = false
     public private(set) var transferMessage: String?
     public private(set) var transferFileName: String?
+    public private(set) var dropping = false
+    public private(set) var dropMessage: String?
     public var previewURL: URL?
     private var previewFiles: [URL] = []
     private var generation = 0
@@ -28,6 +30,8 @@ public final class FileBrowserStore {
     public init(client: OrionClient) { self.client = client }
     public var device: FileDevice? { devices.first { $0.id == deviceId } }
     public var root: FileRoot? { roots.first { $0.id == rootId } }
+    /// The open folder is the Orion server's Dropped files, whose files can be taken back.
+    public var showingDrops: Bool { deviceId == "local" && root?.writable == true }
     public func entryPath(_ file: DeviceFile) -> String { path.isEmpty ? file.name : "\(path)/\(file.name)" }
 
     public func refreshDevices() async {
@@ -142,6 +146,48 @@ public final class FileBrowserStore {
             _ = try manager.replaceItemAt(destination, withItemAt: staged)
         } else {
             try manager.moveItem(at: staged, to: destination)
+        }
+    }
+
+    /// Sends the files the person chose, one at a time, to the Orion server's Dropped files, then
+    /// shows them there. Folders are skipped: only individually chosen files leave this Mac.
+    public func drop(_ urls: [URL]) async {
+        let files = urls.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
+        let skipped = urls.count - files.count
+        guard !files.isEmpty else {
+            error = "Only files can be sent to Orion, not folders."
+            return
+        }
+        dropping = true; error = nil
+        defer { dropping = false }
+        var failures: [String] = []
+        for (index, file) in files.enumerated() {
+            dropMessage = "Sending \(file.lastPathComponent) (\(index + 1) of \(files.count))..."
+            do {
+                _ = try await client.dropFile(file)
+            } catch is CancellationError {
+                break
+            } catch {
+                failures.append("\(file.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        let sent = files.count - failures.count
+        dropMessage = "Sent \(sent) of \(files.count) to Orion.\(skipped > 0 ? " Folders were skipped." : "")"
+        // Show where they went; opening a folder clears errors, so report failures after it.
+        if deviceId != "local" { await selectDevice("local") }
+        if let drops = roots.first(where: \.writable) { await open(root: drops.id, path: "") }
+        if !failures.isEmpty { error = failures.joined(separator: "\n") }
+    }
+
+    /// Removes a dropped file from Orion. The original on this Mac is untouched.
+    public func removeDropped(_ file: DeviceFile) async {
+        guard showingDrops else { return }
+        do {
+            try await client.removeDroppedFile(name: file.name)
+            dropMessage = "Removed \(file.name) from Orion."
+            await open(root: rootId, path: path, offset: offset)
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 

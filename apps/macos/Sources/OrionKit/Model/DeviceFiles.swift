@@ -12,6 +12,24 @@ public struct FileDevice: Decodable, Identifiable, Equatable, Sendable {
 public struct FileRoot: Decodable, Identifiable, Equatable, Sendable {
     public let id: String
     public let label: String
+    /// True only for the Orion server's Dropped files, the one folder that accepts new files.
+    public let writable: Bool
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        label = try container.decode(String.self, forKey: .label)
+        writable = try container.decodeIfPresent(Bool.self, forKey: .writable) ?? false
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, label, writable }
+}
+
+/// A file this Mac sent to the Orion server's Dropped files, under the name the server gave it.
+public struct DroppedFile: Decodable, Sendable {
+    public let rootId: String
+    public let name: String
+    public let sizeBytes: Int64
 }
 
 public struct DeviceFile: Decodable, Identifiable, Equatable, Sendable {
@@ -64,6 +82,15 @@ enum DeviceFileRequest {
         components.percentEncodedPath = "files/\(encodedId)/\(action)"
         if !items.isEmpty { components.queryItems = items }
         // Express decodes query values as form data, where a literal plus means a space.
+        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        return components.string ?? ""
+    }
+
+    /// Sending a file to, or removing one from, the Orion server's Dropped files.
+    static func drop(name: String) -> String {
+        var components = URLComponents()
+        components.percentEncodedPath = "files/local/drops"
+        components.queryItems = [URLQueryItem(name: "name", value: name)]
         components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         return components.string ?? ""
     }

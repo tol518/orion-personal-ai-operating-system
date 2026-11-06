@@ -272,6 +272,34 @@ public actor OrionClient {
         }
     }
 
+    /// Sends one file the person chose to the Orion server's Dropped files. URLSession streams it
+    /// from disk, and nothing else on this Mac is shared.
+    public func dropFile(_ file: URL) async throws -> DroppedFile {
+        var request = try authorizedRequest(path: DeviceFileRequest.drop(name: file.lastPathComponent), method: "POST", authenticated: true)
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await fileTransferSession.upload(for: request, fromFile: file)
+        } catch let error as URLError {
+            throw OrionClientError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else { throw OrionClientError.transport("invalid drop response") }
+        guard (200..<300).contains(http.statusCode) else {
+            throw Self.mapFailure(status: http.statusCode, headers: http, data: data)
+        }
+        do {
+            return try decoder.decode(DroppedFile.self, from: data)
+        } catch {
+            throw OrionClientError.decoding(String(describing: error))
+        }
+    }
+
+    /// Takes a dropped file back out of Orion. The original on this Mac is untouched.
+    public func removeDroppedFile(name: String) async throws {
+        _ = try await sendIgnoringResponse(DeviceFileRequest.drop(name: name), method: "DELETE")
+    }
+
     /// Token and cost usage over a range such as "7d" or "30d".
     public func usage(range: String = "7d") async throws -> UsageSummary {
         try await send("usage?range=\(range)")
