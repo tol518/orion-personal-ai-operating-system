@@ -28,8 +28,74 @@ public struct FileRoot: Decodable, Identifiable, Equatable, Sendable {
 /// A file this Mac sent to the Orion server's Dropped files, under the name the server gave it.
 public struct DroppedFile: Decodable, Sendable {
     public let rootId: String
+    public let path: String
     public let name: String
     public let sizeBytes: Int64
+}
+
+struct DroppedFolder: Decodable { let path: String }
+
+/// What one drop will send: the chosen files, and every file and folder inside chosen folders.
+/// Paths are relative to Dropped files and start with the chosen folder's own name.
+public struct DropPlan: Equatable, Sendable {
+    public var folders: [String] = []
+    public var files: [DropFile] = []
+    /// Hidden files and links left on this Mac. A link could point anywhere, so none is followed.
+    public var skipped = 0
+
+    public struct DropFile: Equatable, Sendable {
+        public let source: URL
+        public let path: String
+    }
+
+    public static let fileLimit = 5000
+
+    public static func make(_ urls: [URL]) throws -> DropPlan {
+        var plan = DropPlan()
+        for url in urls {
+            // Two chosen items with one name (two "Photos" folders) stay apart.
+            var name = url.lastPathComponent
+            var copy = 2
+            while plan.folders.contains(name) || plan.files.contains(where: { $0.path == name }) {
+                name = "\(url.deletingPathExtension().lastPathComponent) (\(copy))\(url.pathExtension.isEmpty ? "" : ".\(url.pathExtension)")"
+                copy += 1
+            }
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
+            if url.lastPathComponent.hasPrefix(".") || values?.isSymbolicLink == true {
+                plan.skipped += 1
+            } else if values?.isRegularFile == true {
+                plan.files.append(DropFile(source: url, path: name))
+            } else if values?.isDirectory == true {
+                plan.folders.append(name)
+                // Relative paths, no link followed or descended into.
+                guard let walker = FileManager.default.enumerator(atPath: url.path) else { continue }
+                while let relative = walker.nextObject() as? String {
+                    let type = walker.fileAttributes?[.type] as? FileAttributeType
+                    if (relative as NSString).lastPathComponent.hasPrefix(".") {
+                        if type == .typeDirectory { walker.skipDescendants() }
+                        plan.skipped += 1
+                    } else if type == .typeDirectory {
+                        plan.folders.append("\(name)/\(relative)")
+                    } else if type == .typeRegular {
+                        plan.files.append(DropFile(source: url.appendingPathComponent(relative), path: "\(name)/\(relative)"))
+                    } else {
+                        plan.skipped += 1
+                    }
+                    if plan.files.count > fileLimit { throw DropPlanError.tooManyFiles }
+                }
+            } else {
+                plan.skipped += 1
+            }
+        }
+        return plan
+    }
+}
+
+public enum DropPlanError: LocalizedError {
+    case tooManyFiles
+    public var errorDescription: String? {
+        "That is more than \(DropPlan.fileLimit) files. Choose a smaller folder, or send it in parts."
+    }
 }
 
 public struct DeviceFile: Decodable, Identifiable, Equatable, Sendable {
@@ -86,11 +152,12 @@ enum DeviceFileRequest {
         return components.string ?? ""
     }
 
-    /// Sending a file to, or removing one from, the Orion server's Dropped files.
-    static func drop(name: String) -> String {
+    /// Sending a file to, or removing a file or folder from, the Orion server's Dropped files.
+    /// `folder` makes a folder there instead. Paths are relative to Dropped files.
+    static func drop(path: String, folder: Bool = false) -> String {
         var components = URLComponents()
-        components.percentEncodedPath = "files/local/drops"
-        components.queryItems = [URLQueryItem(name: "name", value: name)]
+        components.percentEncodedPath = folder ? "files/local/drops/folders" : "files/local/drops"
+        components.queryItems = [URLQueryItem(name: "path", value: path)]
         components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         return components.string ?? ""
     }

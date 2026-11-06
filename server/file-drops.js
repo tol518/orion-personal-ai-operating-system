@@ -7,6 +7,8 @@ import { pipeline } from "node:stream/promises";
 
 export const DROP_ROOT_ID = "orion-drops";
 const DEFAULT_MAX_BYTES = 2 * 1024 ** 3;
+// Deep enough for real project trees, bounded so a path cannot grow without limit.
+const MAX_DEPTH = 32;
 const fail = (message, statusCode) => Object.assign(new Error(message), { statusCode });
 
 /**
@@ -22,6 +24,14 @@ export function dropName(value) {
   return name;
 }
 
+/** A slash-separated place inside the drop folder, one checked name per segment. */
+export function dropPath(value) {
+  if (typeof value !== "string" || !value) throw fail("Name the file being dropped.", 400);
+  const segments = value.split("/").map(dropName);
+  if (segments.length > MAX_DEPTH) throw fail(`Folders can be at most ${MAX_DEPTH} levels deep.`, 400);
+  return segments;
+}
+
 export function parseDropLimit(value = "") {
   if (!value.trim()) return DEFAULT_MAX_BYTES;
   const megabytes = Number(value);
@@ -30,10 +40,10 @@ export function parseDropLimit(value = "") {
 }
 
 /**
- * Files someone chose to drop onto Orion from a client: the one place the Files API writes.
- * Each upload is a single file streamed to a hidden temporary name in a folder Orion owns, then
- * given its own name without replacing anything. Reads go back through the same hardened helper
- * as every other shared folder, so nothing here serves bytes.
+ * Files and folders someone chose to drop onto Orion from a client: the one place the Files API
+ * writes. Each file is streamed to a hidden temporary name in a folder Orion owns, then given its
+ * own name without replacing anything. Reads go back through the same hardened helper as every
+ * other shared folder, so nothing here serves bytes.
  */
 export class FileDrops {
   constructor({ directory, maxBytes = DEFAULT_MAX_BYTES }) {
@@ -51,9 +61,29 @@ export class FileDrops {
     return { id: DROP_ROOT_ID, label: "Dropped files", path: this.directory };
   }
 
+  /**
+   * The folder these segments name inside the drop folder, created if `create` is set. Every
+   * level must be a real folder: a link planted inside the drop folder is never followed.
+   */
+  async #folder(segments, create) {
+    let current = this.directory;
+    for (const segment of segments) {
+      current = path.join(current, segment);
+      if (create) await fsp.mkdir(current, { mode: 0o700 }).catch((error) => {
+        if (error.code !== "EEXIST") throw error;
+      });
+      const info = await fsp.lstat(current).catch((error) => {
+        if (error.code === "ENOENT") throw fail("That dropped folder is gone.", 404);
+        throw error;
+      });
+      if (!info.isDirectory()) throw fail("Dropped files can only go inside dropped folders.", 409);
+    }
+    return current;
+  }
+
   /** Stores one request body as a new file; never overwrites, so a repeat name gets " (2)". */
-  async receive(req, requestedName) {
-    const name = dropName(requestedName);
+  async receive(req, requestedPath) {
+    const segments = dropPath(requestedPath);
     const declared = Number(req.get("content-length"));
     if (!req.get("content-length") || !Number.isSafeInteger(declared) || declared < 0)
       throw fail("Send the file with its size.", 411);
@@ -70,7 +100,9 @@ export class FileDrops {
     try {
       await pipeline(req, counted, fs.createWriteStream(temporary, { flags: "wx", mode: 0o600 }));
       if (received !== declared) throw fail("The upload ended before the whole file arrived.", 400);
-      return { name: await this.#place(temporary, name), sizeBytes: received };
+      const folder = await this.#folder(segments.slice(0, -1), true);
+      const name = await this.#unique(segments.at(-1), (candidate) => fsp.link(temporary, path.join(folder, candidate)));
+      return { path: [...segments.slice(0, -1), name].join("/"), name, sizeBytes: received };
     } catch (error) {
       if (error.code === "ENOSPC") throw fail("The Orion server is out of disk space.", 507);
       throw error;
@@ -79,13 +111,27 @@ export class FileDrops {
     }
   }
 
-  async #place(temporary, name) {
+  /**
+   * Makes a folder for a dropped folder. A top-level folder gets a name of its own, so dropping
+   * "Photos" twice makes "Photos (2)" rather than mixing the two; a nested one may already exist.
+   */
+  async createFolder(requestedPath) {
+    const segments = dropPath(requestedPath);
+    if (segments.length > 1) {
+      await this.#folder(segments, true);
+      return { path: segments.join("/") };
+    }
+    const name = await this.#unique(segments[0], (candidate) => fsp.mkdir(path.join(this.directory, candidate), { mode: 0o700 }));
+    return { path: name };
+  }
+
+  async #unique(name, place) {
     const { name: stem, ext } = path.parse(name);
     for (let copy = 1; copy <= 999; copy += 1) {
       const candidate = copy === 1 ? name : `${stem} (${copy})${ext}`;
       try {
-        // link() fails rather than replacing an existing file, unlike rename().
-        await fsp.link(temporary, path.join(this.directory, candidate));
+        // link() and mkdir() fail rather than replacing what is already there, unlike rename().
+        await place(candidate);
         return candidate;
       } catch (error) {
         if (error.code !== "EEXIST") throw error;
@@ -94,14 +140,16 @@ export class FileDrops {
     throw fail("Too many dropped files share this name.", 409);
   }
 
-  /** Takes one dropped file back out of Orion. Only plain files directly in the folder. */
-  async remove(requestedName) {
-    const name = dropName(requestedName);
-    if (name !== requestedName) throw fail("No dropped file has that name.", 404);
-    const target = path.join(this.directory, name);
+  /** Takes a dropped file, or a whole dropped folder, back out of Orion. */
+  async remove(requestedPath) {
+    const segments = dropPath(requestedPath);
+    if (segments.join("/") !== requestedPath) throw fail("Nothing dropped has that name.", 404);
+    const target = path.join(await this.#folder(segments.slice(0, -1), false), segments.at(-1));
     try {
-      if (!(await fsp.lstat(target)).isFile()) throw fail("Only dropped files can be removed.", 403);
-      await fsp.unlink(target);
+      const info = await fsp.lstat(target);
+      if (info.isDirectory()) await fsp.rm(target, { recursive: true });
+      else if (info.isFile()) await fsp.unlink(target);
+      else throw fail("Only dropped files and folders can be removed.", 403);
     } catch (error) {
       if (error.code === "ENOENT") throw fail("That dropped file is already gone.", 404);
       throw error;

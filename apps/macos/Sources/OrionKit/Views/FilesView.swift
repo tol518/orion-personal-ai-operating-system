@@ -63,11 +63,11 @@ private struct DeviceFilesWorkspace: View {
         }
         .toolbar {
             Button("Send Files to Orion...", systemImage: "square.and.arrow.up") { chooseFilesToSend() }
-                .help("Choose files on this Mac to copy into the Orion server's Dropped files")
+                .help("Choose files or folders on this Mac to copy into the Orion server's Dropped files")
                 .disabled(browser.dropping)
             Button("Refresh devices", systemImage: "arrow.clockwise") { Task { await browser.refreshDevices() } }
         }
-        // Only the files dropped here leave this Mac; nothing else on it is shared.
+        // Only what is dropped here leaves this Mac; nothing else on it is shared.
         .dropDestination(for: URL.self) { urls, _ in
             guard !browser.dropping else { return false }
             Task { await browser.drop(urls) }
@@ -79,8 +79,12 @@ private struct DeviceFilesWorkspace: View {
                     .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 3, dash: [8]))
                     .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                     .overlay {
-                        Label("Drop to send to Orion's Dropped files", systemImage: "tray.and.arrow.down")
-                            .font(.title3.weight(.semibold))
+                        VStack(spacing: 6) {
+                            Label("Drop to send to Orion's Dropped files", systemImage: "tray.and.arrow.down")
+                                .font(.title3.weight(.semibold))
+                            Text("Files and folders. Hidden files and links stay on this Mac.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
                     }
                     .padding(8)
                     .allowsHitTesting(false)
@@ -92,8 +96,10 @@ private struct DeviceFilesWorkspace: View {
             presenting: removing
         ) { file in
             Button("Remove from Orion", role: .destructive) { Task { await browser.removeDropped(file) } }
-        } message: { _ in
-            Text("The copy on the Orion server is deleted. The original on this Mac stays where it is.")
+        } message: { file in
+            Text(file.isDirectory
+                ? "The folder and everything in it are deleted from the Orion server. Originals on this Mac stay where they are."
+                : "The copy on the Orion server is deleted. The original on this Mac stays where it is.")
         }
     }
 
@@ -160,7 +166,7 @@ private struct DeviceFilesWorkspace: View {
                 .contextMenu {
                     Button(file.isDirectory ? "Open folder" : "Preview") { open(file) }
                     if !file.isDirectory { Button("Download...") { save(file) } }
-                    if browser.showingDrops && !file.isDirectory {
+                    if browser.showingDrops {
                         Button("Remove from Orion...", role: .destructive) { removing = file }
                     }
                 }
@@ -179,6 +185,9 @@ private struct DeviceFilesWorkspace: View {
                 LabeledContent("Modified") { Text(file.modifiedAt, style: .date) }.font(.caption)
                 if file.isDirectory {
                     Button("Open folder") { open(file) }
+                    if browser.showingDrops {
+                        Button("Remove from Orion...", systemImage: "trash", role: .destructive) { removing = file }
+                    }
                 } else {
                     Button("Preview", systemImage: "eye") { browser.preview(file) }
                         .keyboardShortcut(.space, modifiers: []).disabled(browser.transferring)
@@ -226,13 +235,13 @@ private struct DeviceFilesWorkspace: View {
     }
 
     private func chooseFilesToSend() {
-        // An open panel grants access to exactly the files chosen, and nothing else on this Mac.
+        // An open panel grants access to exactly what was chosen, and nothing else on this Mac.
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
         panel.prompt = "Send to Orion"
-        panel.message = "Choose files to copy into the Orion server's Dropped files."
+        panel.message = "Choose files or folders to copy into the Orion server's Dropped files. Hidden files and links stay on this Mac."
         panel.begin { response in
             guard response == .OK else { return }
             let urls = panel.urls

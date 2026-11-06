@@ -566,7 +566,7 @@ test("selected files dropped from a client appear as the server's Dropped files 
   assert.equal((await fetch(`${base}/api/files/local/drops?name=x.txt`, { method: "POST", body: "x" })).status, 401);
   const first = await drop("notes.txt", "from the MacBook");
   assert.equal(first.status, 201);
-  assert.deepEqual(await first.json(), { ok: true, rootId: DROP_ROOT_ID, name: "notes.txt", sizeBytes: 16 });
+  assert.deepEqual(await first.json(), { ok: true, rootId: DROP_ROOT_ID, path: "notes.txt", name: "notes.txt", sizeBytes: 16 });
   assert.equal((await (await drop("notes.txt", "second")).json()).name, "notes (2).txt", "never overwrites");
   const roots = await (await fetch(`${base}/api/files/local/roots`, { headers })).json();
   assert.deepEqual(roots.roots.at(-1), { id: DROP_ROOT_ID, label: "Dropped files", writable: true });
@@ -628,4 +628,36 @@ test("the server keeps a long upload open for as long as a stream may run", asyn
   assert.ok(LONGEST_UPLOAD_MS > 2 * 60 * 60 * 1000);
   const source = await fs.readFile(new URL("./index.js", import.meta.url), "utf8");
   assert.match(source, /^httpServer\.requestTimeout = LONGEST_UPLOAD_MS;$/m);
+});
+
+test("a dropped folder keeps its structure, gets a name of its own, and goes back out whole", async (t) => {
+  const { base, headers, drops } = await httpFixture(t);
+  const call = (method, route, query, body) =>
+    fetch(`${base}/api/files/local/${route}?path=${encodeURIComponent(query)}`, {
+      method,
+      headers: { ...headers, "Content-Type": "application/octet-stream" },
+      body,
+    });
+  const folder = await (await call("POST", "drops/folders", "Photos")).json();
+  assert.deepEqual(folder, { ok: true, rootId: DROP_ROOT_ID, path: "Photos" });
+  assert.equal((await (await call("POST", "drops/folders", "Photos")).json()).path, "Photos (2)", "a second drop never merges into the first");
+  assert.equal((await call("POST", "drops/folders", "Photos/Trips/Empty")).status, 201, "empty folders survive");
+  const nested = await (await call("POST", "drops", "Photos/Trips/2026/beach.jpg", "sand")).json();
+  assert.deepEqual(nested, { ok: true, rootId: DROP_ROOT_ID, path: "Photos/Trips/2026/beach.jpg", name: "beach.jpg", sizeBytes: 4 });
+  const listing = await (await fetch(`${base}/api/files/local/list?root=${DROP_ROOT_ID}&path=Photos%2FTrips`, { headers })).json();
+  assert.deepEqual(listing.entries.map((entry) => entry.name), ["2026", "Empty"]);
+  const content = await fetch(`${base}/api/files/local/content?root=${DROP_ROOT_ID}&path=Photos%2FTrips%2F2026%2Fbeach.jpg`, { headers });
+  assert.equal(await content.text(), "sand");
+  for (const unsafe of ["Photos/../escape.txt", "Photos/.git/config", "Photos//x.txt", `${"a/".repeat(33)}x.txt`]) {
+    const refused = await call("POST", "drops", unsafe, "x");
+    assert.equal(refused.status, 400, unsafe);
+  }
+  await fs.symlink(path.dirname(drops.directory), path.join(drops.directory, "Photos", "link"));
+  assert.equal((await call("POST", "drops", "Photos/link/planted.txt", "x")).status, 409, "a link inside the drop folder is never followed");
+  assert.equal((await call("DELETE", "drops", "Photos/link/anything")).status, 409);
+  await assert.rejects(fs.access(path.join(path.dirname(drops.directory), "planted.txt")));
+  assert.equal((await call("DELETE", "drops", "Photos/Trips/2026/beach.jpg")).status, 200);
+  assert.equal((await call("DELETE", "drops", "Photos")).status, 200, "a whole dropped folder goes back out");
+  assert.deepEqual(await fs.readdir(drops.directory), ["Photos (2)"]);
+  assert.equal((await call("DELETE", "drops", "Photos")).status, 404);
 });

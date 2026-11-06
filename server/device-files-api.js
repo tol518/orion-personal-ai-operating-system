@@ -126,7 +126,8 @@ export function createDeviceFilesApi({ files, audit = () => {} }) {
       res.json(await files.stat(req.params.deviceId, location(req), signal)),
     ),
   );
-  // Dropping is the Files API's one write: a single chosen file into the server's own drop folder.
+  // Dropping is the Files API's one write: chosen files and folders into the server's drop folder.
+  // `path` places a file inside a dropped folder; `name` is the original top-level form.
   function drops(deviceId) {
     if (deviceId !== "local" || !files.drops)
       throw Object.assign(new Error("Only the Orion server accepts dropped files."), { statusCode: 404 });
@@ -135,14 +136,21 @@ export function createDeviceFilesApi({ files, audit = () => {} }) {
   router.post(
     "/:deviceId/drops",
     route(async (req, res) => {
-      const saved = await drops(req.params.deviceId).receive(req, req.query.name);
+      const saved = await drops(req.params.deviceId).receive(req, req.query.path ?? req.query.name);
       res.status(201).json({ ok: true, rootId: DROP_ROOT_ID, ...saved });
     }, "files.drop"),
+  );
+  router.post(
+    "/:deviceId/drops/folders",
+    route(async (req, res) => {
+      const created = await drops(req.params.deviceId).createFolder(req.query.path);
+      res.status(201).json({ ok: true, rootId: DROP_ROOT_ID, ...created });
+    }, "files.drop_folder"),
   );
   router.delete(
     "/:deviceId/drops",
     route(async (req, res) => {
-      await drops(req.params.deviceId).remove(req.query.name);
+      await drops(req.params.deviceId).remove(req.query.path ?? req.query.name);
       res.json({ ok: true });
     }, "files.drop_removed"),
   );
