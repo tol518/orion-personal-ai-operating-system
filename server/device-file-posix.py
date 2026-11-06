@@ -16,6 +16,14 @@ class FileAccessError(Exception):
         self.status = status
 
 
+class StreamInterrupted(Exception):
+    """Bytes already went out, so the only honest answer left is to cut the transfer short."""
+
+
+# A stream ends when its consumer stops reading; this bounds one that never does.
+STREAM_SECONDS = 2 * 60 * 60
+
+
 # These re-resolve a held directory by pathname on the server side. Verified on WSL's Windows
 # drives: rename a folder and plant a Windows junction, and a later openat follows the junction.
 PATHNAME_FILESYSTEMS = {"9p", "drvfs", "cifs", "smb3"}
@@ -108,7 +116,7 @@ def describe(name, info):
     }
 
 
-def operate(request):
+def operate(request, out=None):
     if (sys.version_info < (3, 8) or sys.platform not in ("darwin", "linux")
             or os.open not in os.supports_dir_fd or os.stat not in os.supports_dir_fd
             or os.stat not in os.supports_follow_symlinks or os.scandir not in os.supports_fd
@@ -148,13 +156,13 @@ def operate(request):
     parts = relative.split("/") if relative else []
     if any(not safe_name(part) for part in parts):
         raise FileAccessError("Only visible files inside shared folders are available.", 403)
-    if operation not in ("list", "stat", "read"):
+    if operation not in ("list", "stat", "read", "stream") or (operation == "stream" and out is None):
         raise FileAccessError("Unknown file operation.")
     if operation == "stat" and not parts:
         raise FileAccessError("Only regular files can be opened.")
     root_fd = open_root(root["path"])
     try:
-        target = open_target(root_fd, parts[:-1] if operation == "stat" else parts, operation != "read")
+        target = open_target(root_fd, parts[:-1] if operation == "stat" else parts, operation in ("list", "stat"))
     finally:
         os.close(root_fd)
     try:
@@ -208,9 +216,27 @@ def operate(request):
         if operation == "stat":
             return {"ok": True, **result}
         offset, length = request.get("offset"), request.get("length")
-        if type(offset) is not int or not 0 <= offset <= 2 ** 53 - 1 or type(length) is not int or not 1 <= length <= 65536:
+        limit = 2 ** 53 - 1 if operation == "stream" else 65536
+        if type(offset) is not int or not 0 <= offset <= 2 ** 53 - 1 or type(length) is not int or not 1 <= length <= limit:
             raise FileAccessError("Invalid file range.")
         size = min(length, max(0, info.st_size - offset))
+        if operation == "stream":
+            # One header line, then the range's raw bytes from this same descriptor.
+            out.write(json.dumps({"ok": True, "offset": offset, "length": size}).encode("ascii") + b"\n")
+            try:
+                sent = 0
+                while sent < size:
+                    chunk = os.pread(target, min(size - sent, 1 << 20), offset + sent)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    sent += len(chunk)
+                out.flush()
+                if sent != size or describe(result["name"], os.fstat(target))["revision"] != result["revision"]:
+                    raise FileAccessError("This file changed while it was being sent.", 409)
+            except BaseException as error:
+                raise StreamInterrupted(str(error)) from error
+            return None
         data = bytearray()
         while len(data) < size:
             chunk = os.pread(target, size - len(data), offset + len(data))
@@ -224,9 +250,9 @@ def operate(request):
         os.close(target)
 
 
-def respond(request):
+def respond(request, out=None):
     try:
-        return operate(request)
+        return operate(request, out)
     except FileAccessError as error:
         return {"ok": False, "statusCode": error.status, "error": str(error)}
     except OSError as error:
@@ -237,6 +263,13 @@ def respond(request):
 
 
 if __name__ == "__main__":
+    request = json.loads(base64.b64decode(sys.argv[1]))
     # An outer Node host can be terminated independently. Bound the helper's lifetime too.
-    signal.alarm(15)
-    print(json.dumps(respond(json.loads(base64.b64decode(sys.argv[1]))), ensure_ascii=True))
+    signal.alarm(STREAM_SECONDS if request.get("operation") == "stream" else 15)
+    try:
+        result = respond(request, sys.stdout.buffer)
+    except StreamInterrupted as error:
+        sys.stderr.write(str(error)[:200])
+        os._exit(3)
+    if result is not None:
+        print(json.dumps(result, ensure_ascii=True), flush=True)

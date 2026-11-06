@@ -1,7 +1,51 @@
 import express from "express";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parseFileRange, TEXT_PREVIEW_BYTES } from "./device-files.js";
+
+const fail = (message, statusCode) => Object.assign(new Error(message), { statusCode });
+
+/**
+ * Where paired computers deliver streamed file ranges. Mounted ahead of the browser gate: a
+ * computer has no session, so it authenticates with the one-time ticket its request carried,
+ * and the bytes go straight to the request waiting for them without touching disk.
+ */
+export function createNodeFilesApi({ files }) {
+  const router = express.Router();
+  router.post("/files", (req, res) => {
+    res.set({ "Cache-Control": "no-store", Connection: "close" });
+    const ticket = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.get("authorization") ?? "")?.[1];
+    const waiting = files.tickets.claim(ticket);
+    if (!waiting) {
+      res.status(401).json({ ok: false, error: "This file ticket is unknown, expired, or already used." });
+      return;
+    }
+    if (req.get("x-orion-stream-length") !== String(waiting.length)) {
+      waiting.reject(fail("The computer offered a different range than was requested.", 502));
+      res.status(400).json({ ok: false, error: "The stream length does not match the ticket." });
+      return;
+    }
+    let received = 0;
+    const body = new Transform({
+      transform(chunk, _encoding, callback) {
+        received += chunk.length;
+        callback(received > waiting.length ? fail("The computer sent more than was requested.", 502) : null, chunk);
+      },
+      flush(callback) {
+        callback(received === waiting.length ? null : fail("The file stream ended early.", 502));
+      },
+    });
+    body.once("end", () => res.status(200).json({ ok: true }));
+    body.once("close", () => {
+      // Cut short: drop the computer's connection so its upload, and its helper, stop. Destroying
+      // only the request would leave a fully received upload waiting for an answer.
+      if (!body.readableEnded) res.destroy();
+    });
+    pipeline(req, body).catch(() => {});
+    waiting.resolve(body);
+  });
+  return router;
+}
 
 // The caller mounts this router after its browser-session or desktop-token boundary.
 export function createDeviceFilesApi({ files, audit = () => {} }) {
@@ -125,6 +169,12 @@ export function createDeviceFilesApi({ files, audit = () => {} }) {
             .status(range.partial ? 206 : 200)
             .set(headers)
             .end();
+          return;
+        }
+        const streamed = await files.stream(deviceId, at, info, range.start, range.end, signal);
+        if (streamed) {
+          res.status(range.partial ? 206 : 200).set(headers);
+          await pipeline(streamed, res, { signal });
           return;
         }
         const chunks = files.chunks(deviceId, at, info, range.start, range.end, signal);

@@ -9,8 +9,8 @@ import { createHash, randomUUID } from "node:crypto";
 import express from "express";
 import dotenv from "dotenv";
 import { GatewayClient } from "./gateway.js";
-import { DeviceFiles, parseFileRoots } from "./device-files.js";
-import { createDeviceFilesApi } from "./device-files-api.js";
+import { DeviceFiles, parseFileRoots, parseStreamUrl } from "./device-files.js";
+import { createDeviceFilesApi, createNodeFilesApi } from "./device-files-api.js";
 import { loadOrionPlugins, parseOrionPluginPaths } from "./orion-plugin-runtime.js";
 import { DesktopAccess } from "./desktop-access.js";
 import { createDesktopApi, desktopEventFrame } from "./desktop-api.js";
@@ -192,7 +192,11 @@ if (!process.env.MEMORY_ACCESS_PASSWORD) {
 }
 
 const gateway = new GatewayClient({ url: GATEWAY_URL, token: GATEWAY_TOKEN });
-const deviceFiles = new DeviceFiles({ gateway, roots: parseFileRoots(process.env.ORION_FILE_ROOTS_JSON) });
+const deviceFiles = new DeviceFiles({
+  gateway,
+  roots: parseFileRoots(process.env.ORION_FILE_ROOTS_JSON),
+  streamUrl: parseStreamUrl(process.env.ORION_NODE_STREAM_URL),
+});
 gateway.start();
 const windowsScreen = new WindowsScreenBridge({
   url: process.env.WINDOWS_SCREEN_BRIDGE_URL,
@@ -551,6 +555,10 @@ app.use(
     decorateNodes: (payload) => windowsScreen.decorateNodeList(payload),
   }),
 );
+
+// Paired computers deliver streamed file ranges here. Also ahead of the gate: a computer has no
+// browser session, and this router accepts only the one-time ticket a file request issued.
+app.use("/api/v1/node", createNodeFilesApi({ files: deviceFiles }));
 
 app.use("/api", browserAuth.gate);
 app.use("/api/files", createDeviceFilesApi({ files: deviceFiles }));

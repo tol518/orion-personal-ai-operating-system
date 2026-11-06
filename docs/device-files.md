@@ -16,8 +16,10 @@ node execution policy still applies; Orion does not approve commands or weaken t
 automatically.
 
 A Node host inside WSL shares its Windows folders through a separate Windows helper, run with
-Python 3.8+ **for Windows** (`python.exe` on the Node host's `PATH`, which WSL interop provides by
-default). Linux paths inside WSL, such as the Linux home, stay with the POSIX helper. A native
+Python 3.8+ **for Windows**. The worker uses `python.exe` from the Node host's `PATH` when WSL
+added the Windows path to it; a Node host started by systemd has no Windows path, so the worker
+asks Windows for its Python through `cmd.exe` on the drive WSL mounted as `C:`. Linux paths inside
+WSL, such as the Linux home, stay with the POSIX helper. A native
 Windows Node host (not WSL) remains unsupported until the launcher is tested end to end there.
 
 WSL's mounted Windows drives (`/mnt/c`, filesystem type `9p`) do not keep a held directory
@@ -98,10 +100,37 @@ credentials and cannot supply shell code or an arbitrary absolute path.
 For remote hosts, Orion runs its fixed worker through the existing authenticated `node.invoke`
 channel. The Node launcher embeds the same fixed Python helper used locally. Python runs in
 isolated mode without site startup hooks or bytecode writes, with bounded output and a 15-second
-helper lifetime. File parameters are encoded as data in a separate argument. Reads are at most 64 KiB
-per request, below the Node host's captured-output limit; HTTP backpressure controls subsequent
-reads. The BFF stores no file bytes. Remote transfers are sequential and may be slower than a
-direct file-sharing protocol, particularly for large video.
+helper lifetime. File parameters are encoded as data in a separate argument. Listings and
+metadata answer through the Node host's captured output (at most 200,000 characters), so a
+fallback read is at most 64 KiB per request. The BFF stores no file bytes.
+
+### Streamed downloads
+
+Downloads and previews stream a whole byte range in one go, the approach Noctis OS uses for its
+nodes. On the Orion server the helper's output is piped straight into the HTTP response. For a
+paired computer, set `ORION_NODE_STREAM_URL` in the server's private environment to an address the
+computers can reach, normally the server's Tailscale Serve HTTPS name and port:
+
+```dotenv
+ORION_NODE_STREAM_URL=https://orion-host.example.ts.net:8443
+```
+
+Each download then issues a one-time 256-bit ticket bound to that request and its exact byte
+count, and runs the worker once through `node.invoke`. The worker opens the file with the same
+hardened helper, which writes one JSON header line and then the range's raw bytes from the
+already-open handle, and uploads them to `POST /api/v1/node/files` with the ticket. That router sits
+in front of the browser session gate, like the native client's, and accepts nothing but a live
+ticket: unknown, expired (30 seconds to start), reused, wrong-length, and oversized uploads are
+refused, and bytes go to the waiting response without touching disk. A file that changes during
+the transfer, or a closed browser, ends both the upload and the helper. A stream may run for up to
+two hours.
+
+Without `ORION_NODE_STREAM_URL`, or when a computer cannot reach it in time, Orion falls back to
+64 KiB requests for that computer and tries streaming again after ten minutes. The ticket travels
+to the computer inside the `node.invoke` request and is briefly visible in that computer's process
+list, so keep the address on the tailnet rather than the open internet. Measured between WSL on a
+Windows PC and a Mac on the same network: 5.5 MiB/s for Windows folders and 11 MiB/s for the WSL
+Linux home, against about 0.3 MiB/s with 64 KiB requests.
 
 Root acquisition and every child traversal open one component relative to an already-open
 directory descriptor with `O_NOFOLLOW`. Directory scans and child metadata remain descriptor-relative;
