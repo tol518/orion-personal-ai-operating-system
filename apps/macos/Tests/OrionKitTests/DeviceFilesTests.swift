@@ -30,6 +30,22 @@ final class DeviceFilesTests: XCTestCase {
         XCTAssertTrue(download.contains("download=1"))
     }
 
+    func testOnlyTheDroppedFilesRootIsWritable() throws {
+        let roots = try JSONDecoder().decode(FileRootsResponse.self, from: Data(#"{"roots":[{"id":"orion-drops","label":"Dropped files","writable":true},{"id":"home","label":"Home"}]}"#.utf8))
+        XCTAssertEqual(roots.roots.map(\.writable), [true, false])
+        let dropped = try JSONDecoder().decode(DroppedFile.self, from: Data(#"{"ok":true,"rootId":"orion-drops","name":"notes (2).txt","sizeBytes":12}"#.utf8))
+        XCTAssertEqual(dropped.name, "notes (2).txt")
+    }
+
+    func testDropPathCarriesOnlyTheFileNameAndAlwaysTargetsTheServer() throws {
+        let path = DeviceFileRequest.drop(name: "a + b & c #1.pdf")
+        let components = try XCTUnwrap(URLComponents(string: path))
+        XCTAssertEqual(components.path, "files/local/drops")
+        XCTAssertEqual(components.queryItems, [URLQueryItem(name: "name", value: "a + b & c #1.pdf")])
+        XCTAssertTrue(path.contains("%2B"), "a plus must survive the server's form-query decoder")
+        XCTAssertNil(components.fragment)
+    }
+
     func testDeviceSpecificErrorsAreNotMisreportedAsPairingProblems() {
         let response = HTTPURLResponse(url: URL(string: "http://mini.example")!, statusCode: 503, httpVersion: nil, headerFields: [:])!
         let offline = OrionClient.mapFailure(status: 503, headers: response, data: Data(#"{"ok":false,"error":"This computer is offline."}"#.utf8))
@@ -85,6 +101,34 @@ final class DeviceFileIntegrationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: original.deletingLastPathComponent()) }
         XCTAssertEqual(original.lastPathComponent, "Welcome.md")
         XCTAssertEqual(try Data(contentsOf: preview), try Data(contentsOf: original))
+    }
+
+    func testDroppingSendsOnlyChosenFilesShowsThemAndCanTakeThemBack() async throws {
+        let client = try await client()
+        defer { Task { try? await client.unpair() } }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("orion-drop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("Folder"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let name = "Drop \(UUID().uuidString.prefix(8)) + notes.txt"
+        let chosen = directory.appendingPathComponent(name)
+        try Data("chosen on this Mac".utf8).write(to: chosen)
+        let browser = FileBrowserStore(client: client)
+        await browser.refreshDevices()
+        await browser.drop([chosen, directory.appendingPathComponent("Folder")])
+        XCTAssertNil(browser.error)
+        XCTAssertEqual(browser.dropMessage, "Sent 1 of 1 to Orion. Folders were skipped.")
+        XCTAssertTrue(browser.showingDrops, "the browser shows where the file went")
+        let dropped = try XCTUnwrap(browser.entries.first { $0.name == name })
+        XCTAssertFalse(browser.entries.contains { $0.name == "Folder" })
+        let info = try await client.fileInfo(deviceId: "local", root: browser.rootId, path: name, revision: dropped.revision)
+        let copy = try await client.downloadFile(deviceId: "local", root: browser.rootId, path: name, info: info, preview: false)
+        defer { try? FileManager.default.removeItem(at: copy.deletingLastPathComponent()) }
+        XCTAssertEqual(try Data(contentsOf: copy), Data("chosen on this Mac".utf8))
+        await browser.removeDropped(dropped)
+        XCTAssertNil(browser.error)
+        XCTAssertFalse(browser.entries.contains { $0.name == name })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: chosen.path), "removing from Orion leaves the original")
+        browser.stop()
     }
 
     func testStoreNavigatesAndHandlesOfflineDevices() async throws {

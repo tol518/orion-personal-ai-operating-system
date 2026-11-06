@@ -1,9 +1,10 @@
 # Files Across Devices
 
 The **Files** view is available in the web dashboard and native Mac app. It browses the Orion
-server and paired OpenClaw computers, previews supported files, and downloads originals. This is
-read-only access: no upload, deletion, rename, background synchronization, or agent execution is
-exposed by the Files API.
+server and paired OpenClaw computers, previews supported files, and downloads originals. Shared
+folders are read-only. The one write is **Dropped files**: copies of files you choose to send to
+the Orion server from the Mac app or web dashboard. There is no rename, background
+synchronization, or agent execution, and nothing is deleted except a dropped copy you remove.
 
 ## Connect a computer
 
@@ -72,6 +73,26 @@ ORION_FILE_ROOTS_JSON={"local":[{"id":"shared","label":"Shared","path":"/Users/e
 Keep real root paths and node IDs out of Git. Use this setting for actual canonical folder paths,
 network mounts, or a smaller set of folders. Restart the BFF after changing it. Invalid root
 configuration fails startup rather than silently enabling a different share.
+
+## Dropped files
+
+Send selected files from any client to the Orion server: drag them onto the Files view in the Mac
+app or web dashboard, or use **Send Files to Orion**. Only the files you choose are copied; dropped
+folders are skipped, and nothing else on the sending computer becomes visible. Files then appears
+open at **Dropped files**, listed last among the Orion server's folders, where every client can
+preview and download them. Removing one deletes the server's copy only; the original stays where
+it was.
+
+Each file is streamed to a hidden temporary name in the drop folder and then given its own name,
+never replacing an existing file (a repeat becomes `name (2).ext`). A name starting with a dot is
+refused because Files would hide it, and characters the reader refuses (`/`, `\`, `:`, control
+characters) become dashes. Files are stored with owner-only permissions and are read back
+through the same hardened helper as every other shared folder. Uploads require the dashboard
+session or a desktop token, and the desktop audit records the action without the file name.
+
+The folder defaults to `server/data/dropped-files`, which Git ignores. Set `ORION_DROP_DIR` to
+keep it elsewhere and `ORION_DROP_MAX_MB` to change the per-file limit (2048 MB by default).
+Interrupted uploads leave nothing behind, and leftovers from a restart are cleared at startup.
 
 ## Browse, preview, download
 
@@ -170,11 +191,13 @@ The following routes exist under both prefixes:
 | `GET /:deviceId/list?root=id&path=relative&offset=0`          | Entries, `nextOffset`, and `scanTruncated`.                                         |
 | `GET /:deviceId/stat?root=id&path=relative&revision=value`    | File metadata, MIME type, and preview kind.                                         |
 | `GET /:deviceId/content?root=id&path=relative&revision=value` | Original bytes; supports `Range` and `HEAD`.                                        |
+| `POST /local/drops?name=file`                                 | Body is one file's raw bytes with `Content-Length`; answers the stored name.         |
+| `DELETE /local/drops?name=file`                               | Removes one dropped file from the Orion server.                                     |
 
 `preview=1` bounds text previews; `download=1` forces attachment disposition. File locations
-consist of device ID, root ID, and a slash-separated relative path. No route writes to the source
-device. Requests outside a share, hidden segments, symlinks, or Windows alternate data streams
-are refused.
+consist of device ID, root ID, and a slash-separated relative path. No route writes to a source
+computer; the drop routes write only into the Orion server's drop folder. Requests outside a
+share, hidden segments, symlinks, or Windows alternate data streams are refused.
 
 ## Public source promotion
 

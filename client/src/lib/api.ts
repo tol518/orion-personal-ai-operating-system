@@ -617,6 +617,19 @@ export const api = {
     getJson<FileInfo>(`/files/${encodeURIComponent(deviceId)}/stat?${fileQuery(root, path, revision)}`, signal),
   fileUrl: (deviceId: string, root: string, path: string, revision: string, download = false) =>
     `/api/files/${encodeURIComponent(deviceId)}/content?${fileQuery(root, path, revision)}&${download ? "download=1" : "preview=1"}`,
+  // Sends one chosen file to the Orion server's Dropped files; the browser streams it from disk.
+  dropFile: async (file: File) => {
+    const res = await fetch(`${BASE}/files/local/drops?name=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: file,
+    });
+    const body = await res.json().catch(() => null);
+    if (!body?.ok) throw new Error(body?.error ?? `Could not send ${file.name} to Orion.`);
+    return body as { ok: true; rootId: string; name: string; sizeBytes: number };
+  },
+  removeDroppedFile: (name: string) =>
+    deleteJson(`/files/local/drops?name=${encodeURIComponent(name)}`, {}),
   deleteNode: (nodeId: string) => deleteJson(`/nodes/${encodeURIComponent(nodeId)}`, {}),
   usage: (range = "7d") => getJson<UsageReport>(`/usage?range=${encodeURIComponent(range)}`),
   sessions: (limit = 20) => getJson(`/sessions?limit=${limit}`),

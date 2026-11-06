@@ -6,7 +6,8 @@ export type FileDevice = {
   available: boolean;
   local: boolean;
 };
-export type FileRoot = { id: string; label: string };
+// `writable` marks the Orion server's Dropped files, the one folder that accepts new files.
+export type FileRoot = { id: string; label: string; writable?: boolean };
 export type DeviceFile = {
   name: string;
   kind: "file" | "directory";

@@ -1,6 +1,32 @@
 .files-page {
+  position: relative;
   color: #c5d3e8;
   min-width: 0;
+}
+.files-heading__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.files-dropzone {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  border: 2px dashed rgb(var(--hud-accent));
+  border-radius: 0.8rem;
+  background: rgb(var(--orion-panel) / 0.92);
+  color: #eef4ff;
+  text-align: center;
+  pointer-events: none;
+}
+.files-dropzone span {
+  color: #8b9bb2;
+  font-size: 0.78rem;
 }
 .files-heading {
   display: flex;
@@ -341,6 +367,14 @@
   color: #e5c18c;
   font-size: 0.78rem;
   line-height: 1.6;
+}
+.files-notice--info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-color: rgb(var(--hud-accent) / 0.3);
+  background: rgb(var(--hud-accent) / 0.06);
+  color: #c5d8f2;
 }
 .files-notice button {
   margin-left: 0.8rem;

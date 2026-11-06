@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import os from "node:os";
 import { Readable } from "node:stream";
 import { deviceFileOperation, deviceFilePrograms } from "./device-file-worker.js";
+import { DROP_ROOT_ID } from "./file-drops.js";
 
 const CHUNK_BYTES = 65536;
 export const TEXT_PREVIEW_BYTES = 256 * 1024;
@@ -9,6 +10,8 @@ const REMOTE_TIMEOUT_MS = 30_000;
 // A streamed range may take as long as a film over a slow uplink, but must start promptly.
 const STREAM_START_MS = 30_000;
 const STREAM_RUN_MS = 2 * 60 * 60 * 1000;
+// How long the server must keep receiving one request body: a stream at its cap, plus slack.
+export const LONGEST_UPLOAD_MS = STREAM_RUN_MS + 15 * 60 * 1000;
 // After a computer could not reach Orion, use 64 KiB requests for a while before trying again.
 const STREAM_RETRY_MS = 10 * 60 * 1000;
 const remoteProgram = `const deviceFilePrograms = ${JSON.stringify(deviceFilePrograms)}; (${deviceFileOperation.toString()})(JSON.parse(Buffer.from(process.argv[1], 'base64').toString('utf8'))).then(result => process.stdout.write(JSON.stringify(result))).catch(() => { process.stderr.write('File operation failed'); process.exitCode = 1; });`;
@@ -162,6 +165,7 @@ export class DeviceFiles {
     localName = os.hostname(),
     worker = deviceFileOperation,
     streamUrl = null,
+    drops = null,
   } = {}) {
     this.gateway = gateway;
     this.roots = roots;
@@ -170,6 +174,13 @@ export class DeviceFiles {
     this.streamUrl = streamUrl;
     this.tickets = new StreamTickets();
     this.noStream = new Map();
+    this.drops = drops;
+  }
+
+  /** The worker input with this device's configured roots; dropped files are always the server's. */
+  withRoots(deviceId, input) {
+    if (deviceId === "local" && this.drops && input.rootId === DROP_ROOT_ID) return { ...input, roots: [this.drops.root] };
+    return Object.hasOwn(this.roots, deviceId) ? { ...input, roots: this.roots[deviceId] } : input;
   }
 
   async gatewayRequest(method, params, signal, timeoutMs = REMOTE_TIMEOUT_MS) {
@@ -294,10 +305,13 @@ export class DeviceFiles {
     signal?.throwIfAborted();
     if (typeof deviceId !== "string" || !deviceId || deviceId.length > 200)
       throw fail("Choose a file device.", 400);
-    const input = { ...parameters, operation };
-    if (Object.hasOwn(this.roots, deviceId)) input.roots = this.roots[deviceId];
+    const input = this.withRoots(deviceId, { ...parameters, operation });
     const result =
       deviceId === "local" ? await this.worker(input) : await this.invoke(deviceId, input, signal);
+    if (deviceId === "local" && this.drops && operation === "roots" && result?.ok === true) {
+      const { id, label } = this.drops.root;
+      result.roots = [...result.roots.filter((root) => root.id !== id), { id, label, writable: true }];
+    }
     signal?.throwIfAborted();
     if (result?.ok !== true)
       throw fail(
@@ -317,8 +331,7 @@ export class DeviceFiles {
     signal?.throwIfAborted();
     const length = end - start + 1;
     if (length <= 0 || typeof deviceId !== "string" || !deviceId || deviceId.length > 200) return null;
-    const input = { ...location, operation: "stream", revision: info.revision, offset: start, length };
-    if (Object.hasOwn(this.roots, deviceId)) input.roots = this.roots[deviceId];
+    const input = this.withRoots(deviceId, { ...location, operation: "stream", revision: info.revision, offset: start, length });
     if (deviceId === "local") return this.localStream(input);
     if (!this.streamUrl || (this.noStream.get(deviceId) ?? 0) > Date.now()) return null;
     const ticket = this.tickets.issue(length);

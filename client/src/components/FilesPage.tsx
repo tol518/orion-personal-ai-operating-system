@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { DragEvent } from "react";
 import {
   ArrowLeft,
   ChevronRight,
@@ -14,6 +15,8 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Trash2,
+  Upload,
   WifiOff,
   X,
 } from "lucide-react";
@@ -35,12 +38,58 @@ function childPath(parent: string, name: string) {
   return parent ? `${parent}/${name}` : name;
 }
 
+/** Only individual files: a dropped folder would send everything inside it. */
+function droppedFiles(event: DragEvent) {
+  const items = [...event.dataTransfer.items];
+  const files = items.length
+    ? items
+        .filter((item) => item.kind === "file" && !item.webkitGetAsEntry?.()?.isDirectory)
+        .map((item) => item.getAsFile())
+        .filter((file): file is globalThis.File => Boolean(file))
+    : [...event.dataTransfer.files];
+  return { files, skipped: (items.length || event.dataTransfer.files.length) - files.length };
+}
+
 export default function FilesPage() {
   const [devices, setDevices] = useState<FileDevice[]>([]);
   const [deviceId, setDeviceId] = useState("local");
   const [error, setError] = useState<string | null>(null);
   const [gatewayUnavailable, setGatewayUnavailable] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const [sending, setSending] = useState<string | null>(null);
+  const [sendNote, setSendNote] = useState<string | null>(null);
+  const [showDrops, setShowDrops] = useState(0);
+  const picker = useRef<HTMLInputElement>(null);
+
+  async function send(files: globalThis.File[], skipped = 0) {
+    if (sending || !files.length) {
+      if (skipped) setSendNote("Only files can be sent to Orion, not folders.");
+      return;
+    }
+    const failures: string[] = [];
+    for (const [index, file] of files.entries()) {
+      setSending(`Sending ${file.name} (${index + 1} of ${files.length})...`);
+      try {
+        await api.dropFile(file);
+      } catch (failure) {
+        failures.push(`${file.name}: ${errorMessage(failure)}`);
+      }
+    }
+    setSending(null);
+    setSendNote(
+      [
+        `Sent ${files.length - failures.length} of ${files.length} to Orion.`,
+        skipped ? "Folders were skipped." : "",
+        ...failures,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+    setDeviceId("local");
+    setShowDrops((value) => value + 1);
+  }
+  const accepts = (event: DragEvent) => event.dataTransfer.types.includes("Files");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -66,17 +115,68 @@ export default function FilesPage() {
 
   const device = devices.find((entry) => entry.id === deviceId);
   return (
-    <section className="files-page" aria-labelledby="files-title">
+    <section
+      className="files-page"
+      aria-labelledby="files-title"
+      onDragOver={(event) => {
+        if (!accepts(event)) return;
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(event) => {
+        if (!accepts(event)) return;
+        event.preventDefault();
+        setDragging(false);
+        const { files, skipped } = droppedFiles(event);
+        void send(files, skipped);
+      }}
+    >
+      {dragging && (
+        <div className="files-dropzone" aria-hidden="true">
+          <Upload size={28} />
+          <strong>Drop to send to Orion's Dropped files</strong>
+          <span>Only the files you drop are copied. Folders are skipped.</span>
+        </div>
+      )}
       <header className="files-heading">
         <div>
           <p className="files-eyebrow">CONNECTED WORKSPACE</p>
           <h1 id="files-title">Files</h1>
           <p>Your computers. One place to find what you need.</p>
         </div>
-        <button className="files-button" onClick={() => setRefresh((value) => value + 1)}>
-          <RefreshCw size={15} /> Refresh devices
-        </button>
+        <div className="files-heading__actions">
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            onChange={(event) => {
+              void send([...(event.target.files ?? [])]);
+              event.target.value = "";
+            }}
+          />
+          <button
+            className="files-button"
+            disabled={Boolean(sending)}
+            onClick={() => picker.current?.click()}
+          >
+            <Upload size={15} /> Send files to Orion
+          </button>
+          <button className="files-button" onClick={() => setRefresh((value) => value + 1)}>
+            <RefreshCw size={15} /> Refresh devices
+          </button>
+        </div>
       </header>
+      {(sending || sendNote) && (
+        <div className="files-notice files-notice--info" role="status">
+          {sending ? <LoaderCircle className="animate-spin" size={14} /> : null}
+          {sending ?? sendNote}
+          {!sending && <button onClick={() => setSendNote(null)}>Dismiss</button>}
+        </div>
+      )}
       {error && (
         <div className="files-notice" role="alert">
           {error}
@@ -116,7 +216,7 @@ export default function FilesPage() {
         </div>
       )}
       {device ? (
-        <DeviceWorkspace key={device.id} device={device} />
+        <DeviceWorkspace key={device.id} device={device} showDrops={showDrops} />
       ) : devices.length ? (
         <div className="files-empty">
           <Monitor size={30} />
@@ -127,14 +227,14 @@ export default function FilesPage() {
         <ShieldCheck size={16} />
         <span>
           Read-only access to shared folders. Files stay on their device until you preview or
-          download them.
+          download them. Dropped files are copies you chose to send to the Orion server.
         </span>
       </footer>
     </section>
   );
 }
 
-function DeviceWorkspace({ device }: { device: FileDevice }) {
+function DeviceWorkspace({ device, showDrops }: { device: FileDevice; showDrops: number }) {
   const [roots, setRoots] = useState<FileRoot[]>([]);
   const [rootId, setRootId] = useState("");
   const [path, setPath] = useState("");
@@ -157,8 +257,18 @@ function DeviceWorkspace({ device }: { device: FileDevice }) {
       .then((result) => {
         if (controller.signal.aborted) return;
         setRoots(result.roots);
+        // After sending files, show them where they went.
+        const drops = showDrops ? result.roots.find((entry) => entry.writable) : undefined;
+        if (drops) {
+          setPath("");
+          setOffset(0);
+        }
         setRootId((current) =>
-          result.roots.some(({ id }) => id === current) ? current : (result.roots[0]?.id ?? ""),
+          drops
+            ? drops.id
+            : result.roots.some(({ id }) => id === current)
+              ? current
+              : (result.roots[0]?.id ?? ""),
         );
       })
       .catch((failure) => {
@@ -168,7 +278,7 @@ function DeviceWorkspace({ device }: { device: FileDevice }) {
         if (!controller.signal.aborted) setRootsLoading(false);
       });
     return () => controller.abort();
-  }, [device.id, device.available, refresh]);
+  }, [device.id, device.available, refresh, showDrops]);
 
   useEffect(() => {
     setSelected(null);
@@ -190,7 +300,7 @@ function DeviceWorkspace({ device }: { device: FileDevice }) {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [device.id, device.available, rootId, path, offset, refresh]);
+  }, [device.id, device.available, rootId, path, offset, refresh, showDrops]);
 
   const openFolder = (nextPath: string) => {
     setPath(nextPath);
@@ -210,6 +320,16 @@ function DeviceWorkspace({ device }: { device: FileDevice }) {
       </div>
     );
   const root = roots.find(({ id }) => id === rootId);
+  const removeDropped = async (name: string) => {
+    if (!window.confirm(`Remove ${name} from Orion? The copy on the Orion server is deleted; the original stays on your computer.`))
+      return;
+    try {
+      await api.removeDroppedFile(name);
+      setRefresh((value) => value + 1);
+    } catch (failure) {
+      setError(errorMessage(failure));
+    }
+  };
   const entries =
     listing?.entries.filter((entry) =>
       entry.name.toLocaleLowerCase().includes(filter.toLocaleLowerCase()),
@@ -338,6 +458,15 @@ function DeviceWorkspace({ device }: { device: FileDevice }) {
                         </td>
                         <td>{new Date(entry.modifiedAt).toLocaleDateString()}</td>
                         <td>
+                          {entry.kind === "file" && root?.writable && (
+                            <button
+                              className="files-icon-button"
+                              aria-label={`Remove ${entry.name} from Orion`}
+                              onClick={() => void removeDropped(entry.name)}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
                           {entry.kind === "file" && (
                             <a
                               className="files-icon-button"

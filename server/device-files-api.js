@@ -2,6 +2,7 @@ import express from "express";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parseFileRange, TEXT_PREVIEW_BYTES } from "./device-files.js";
+import { DROP_ROOT_ID } from "./file-drops.js";
 
 const fail = (message, statusCode) => Object.assign(new Error(message), { statusCode });
 
@@ -55,19 +56,19 @@ export function createDeviceFilesApi({ files, audit = () => {} }) {
     res.set({ "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
     next();
   });
-  function route(handler) {
+  function route(handler, action) {
     return async (req, res) => {
       const controller = new AbortController();
       const close = () => {
         if (!res.writableEnded) controller.abort();
       };
       res.on("close", close);
-      const action = `files.${req.path.split("/").pop()}`;
+      const name = action ?? `files.${req.path.split("/").pop()}`;
       try {
         await handler(req, res, controller.signal);
-        audit(req, action, "completed");
+        audit(req, name, "completed");
       } catch (error) {
-        audit(req, action, controller.signal.aborted ? "cancelled" : "failed");
+        audit(req, name, controller.signal.aborted ? "cancelled" : "failed");
         if (controller.signal.aborted) return;
         if (res.headersSent) {
           res.destroy();
@@ -124,6 +125,26 @@ export function createDeviceFilesApi({ files, audit = () => {} }) {
     route(async (req, res, signal) =>
       res.json(await files.stat(req.params.deviceId, location(req), signal)),
     ),
+  );
+  // Dropping is the Files API's one write: a single chosen file into the server's own drop folder.
+  function drops(deviceId) {
+    if (deviceId !== "local" || !files.drops)
+      throw Object.assign(new Error("Only the Orion server accepts dropped files."), { statusCode: 404 });
+    return files.drops;
+  }
+  router.post(
+    "/:deviceId/drops",
+    route(async (req, res) => {
+      const saved = await drops(req.params.deviceId).receive(req, req.query.name);
+      res.status(201).json({ ok: true, rootId: DROP_ROOT_ID, ...saved });
+    }, "files.drop"),
+  );
+  router.delete(
+    "/:deviceId/drops",
+    route(async (req, res) => {
+      await drops(req.params.deviceId).remove(req.query.name);
+      res.json({ ok: true });
+    }, "files.drop_removed"),
   );
   router.get(
     "/:deviceId/content",

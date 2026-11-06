@@ -136,9 +136,10 @@ and screen control. These still run on the Mini; they are simply not
 reachable from this app. Each needs its own authorization contract and audit trail before a
 native surface is appropriate — a node being online is not permission to drive it.
 
-Files is now a separate read-only surface, limited to server-owned shared roots and existing node
-execution permission. The app is a file client; sharing this Mac's own folders also requires a
-paired OpenClaw Node host on this Mac. Quick Look uses temporary local files and removes them
+Files is now a separate surface, limited to server-owned shared roots and existing node execution
+permission. Shared folders are read-only. Files you drag onto Files, or choose with **Send Files to
+Orion**, are copied to the Orion server's Dropped files; nothing else on this Mac is shared.
+Sharing this Mac's own folders also requires a paired OpenClaw Node host on this Mac. Quick Look uses temporary local files and removes them
 after use. See [Files across devices](../../docs/device-files.md) for setup, privacy, transport,
 and preview limits. This addition does not enable any excluded feature above.
 
