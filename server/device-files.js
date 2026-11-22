@@ -322,7 +322,7 @@ export class DeviceFiles {
   }
 
   /**
-   * One byte range as a single stream, the way Noctis's nodes send a film: a paired computer
+   * One byte range as a single stream: a paired computer
    * pushes the whole range to Orion through a one-time ticket instead of answering one 64 KiB
    * request at a time. Resolves once bytes flow, or with null when this device should use
    * `chunks` (no stream address, an empty range, or a computer that could not reach Orion).

@@ -137,8 +137,7 @@ fallback read is at most 64 KiB per request. The BFF stores no file bytes.
 
 ### Streamed downloads
 
-Downloads and previews stream a whole byte range in one go, the approach Noctis OS uses for its
-nodes. On the Orion server the helper's output is piped straight into the HTTP response. For a
+Downloads and previews stream a whole byte range in one go. On the Orion server the helper's output is piped straight into the HTTP response. For a
 paired computer, set `ORION_NODE_STREAM_URL` in the server's private environment to an address the
 computers can reach, normally the server's Tailscale Serve HTTPS name and port:
 
