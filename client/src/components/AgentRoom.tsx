@@ -18,6 +18,8 @@ import { api, type AgentAnimationSpec, type AgentModels } from "../lib/api";
 import CreateAgentDialog from "./CreateAgentDialog";
 
 export type AgentRoomAgent = {
+  thinkingOptions?: string[];
+  thinkingLevels?: {id:string;label:string}[];
   id: string;
   name?: string;
   role?: string;
@@ -33,6 +35,11 @@ export type AgentRoomAgent = {
 };
 
 export type AgentRoomSession = {
+  internal?: boolean;
+  parentKey?: string;
+  thinkingLevel?: string;
+  thinkingLevels?: string[];
+  supportsThinking?: boolean;
   key: string;
   kind?: string;
   updatedAt?: number;

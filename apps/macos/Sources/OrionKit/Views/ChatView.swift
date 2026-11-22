@@ -1,227 +1,167 @@
 import SwiftUI
 
-/// Screen 4: select an agent/session, send a turn, stream the reply, surface failures.
-///
-/// This is the vertical slice the plan asks for. The session lives on the Mini, so closing this
-/// window or quitting the app does not stop a run — it keeps going and the transcript catches up
-/// on the next history read.
 struct ChatView: View {
-    @Bindable var store: OrionStore
-    @State private var draft = ""
-    @FocusState private var composerFocused: Bool
-
+    let store: OrionStore
     var body: some View {
         HSplitView {
-            sessionList
-                .frame(minWidth: 220, idealWidth: 260, maxWidth: 340)
-            transcript
-                .frame(minWidth: 420)
-        }
-        .navigationTitle("Chat")
-    }
-
-    // MARK: Sessions
-
-    private var sessionList: some View {
-        VStack(spacing: 0) {
-            if store.sessions.isEmpty {
-                EmptyHint(text: "No sessions. Start one from the Agents screen.")
-                    .padding(12)
-                Spacer()
+            ChatSessions(store: store).frame(minWidth: 195, idealWidth: 240, maxWidth: 340)
+            if let key = store.selectedSessionKey {
+                VStack(spacing: 0) {
+                    if let session = store.selectedSession { ChatControls(store: store, session: session) }
+                    if !store.gatewayConnected {
+                        Label("The Mini lost its gateway connection.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                    }
+                    Divider()
+                    ConversationTimeline(store: store, key: key)
+                    Divider()
+                    ChatComposer(store: store, key: key)
+                }.id(key).frame(minWidth: 410)
             } else {
-                List(selection: sessionSelection) {
-                    ForEach(store.sessions) { session in
-                        SessionRow(session: session, agentName: agentName(for: session))
-                            .tag(session.key)
-                    }
-                }
-                .listStyle(.sidebar)
+                ContentUnavailableView("Select a conversation", systemImage: "bubble.left.and.bubble.right",
+                                       description: Text("Choose a session or start a new conversation."))
             }
-        }
+        }.navigationTitle("Chat")
     }
+}
 
-    private var sessionSelection: Binding<String?> {
-        Binding(
-            get: { store.selectedSessionKey },
-            set: { key in
-                guard let key else { return }
-                Task { await store.selectSession(key) }
-            }
-        )
-    }
+private struct ScrollBounds: PreferenceKey {
+    static let defaultValue = CGRect.zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
 
-    // MARK: Transcript
+private struct ConversationTimeline: View {
+    let store: OrionStore
+    let key: String
+    @State private var following = true
+    @State private var bounds = CGRect.zero
 
-    @ViewBuilder
-    private var transcript: some View {
-        if store.selectedSessionKey == nil {
-            ContentUnavailableView(
-                "No session selected",
-                systemImage: "bubble.left.and.bubble.right",
-                description: Text("Pick a session on the left, or start one from the Agents screen.")
-            )
-        } else {
-            VStack(spacing: 0) {
-                if !store.gatewayConnected {
-                    banner(
-                        "The Mini cannot reach the OpenClaw gateway. Sending will fail until it reconnects.",
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                }
-                messageScroll
-                Divider()
-                composer
-            }
-        }
-    }
-
-    private var messageScroll: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if store.isLoadingTranscript {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Loading conversation…").font(.caption).foregroundStyle(.secondary)
+    var body: some View {
+        GeometryReader { viewport in
+            ScrollViewReader { reader in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if store.isLoadingTranscript { ProgressView("Loading conversation…").controlSize(.small) }
+                        ForEach(ChatItem.timeline(store.conversation, approvals: store.inbox.items.filter {
+                            $0.sessionKey == nil || $0.sessionKey == key
+                        })) { item in
+                            switch item {
+                            case .message(let message): MessageBubble(message: message)
+                            case .run(let run): RunCard(run: run)
+                            case .approval(let approval): ApprovalCard(store: store, approval: approval)
+                            }
                         }
-                        .padding(.top, 8)
-                    }
-                    ForEach(store.messages) { message in
-                        MessageBubble(message: message)
-                    }
-                    if let streaming = store.streamingReply {
-                        MessageBubble(
-                            message: ChatMessage(role: .agent, text: streaming.isEmpty ? "…" : streaming)
-                        )
-                        .id(Self.streamingAnchor)
-                    }
-                    // Anchor so a new turn scrolls into view without measuring content height.
-                    Color.clear.frame(height: 1).id(Self.bottomAnchor)
+                        if let reply = store.streamingReply, !reply.isEmpty {
+                            MessageBubble(message: ChatMessage(role: .agent, text: TranscriptFormatter.stripHiddenMarkers(reply),
+                                                               time: store.conversation.current.flatMap { store.conversation.runs[$0]?.time } ?? Date()))
+                        }
+                        Color.clear.frame(height: 1).id("bottom")
+                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(GeometryReader { content in
+                        Color.clear.preference(key: ScrollBounds.self, value: content.frame(in: .named("chatViewport")))
+                    })
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .onChange(of: store.messages.count) { scrollToBottom(proxy) }
-            .onChange(of: store.streamingReply) { scrollToBottom(proxy) }
-            .onChange(of: store.selectedSessionKey) { scrollToBottom(proxy) }
-        }
-    }
-
-    private var composer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .bottom, spacing: 8) {
-                TextField("Message", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...6)
-                    .focused($composerFocused)
-                    .padding(8)
-                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
-                    .onSubmit { Task { await send() } }
-                Button {
-                    Task { await send() }
-                } label: {
-                    if store.isSending {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.up.circle.fill").font(.title2)
+                .coordinateSpace(name: "chatViewport")
+                .onPreferenceChange(ScrollBounds.self) { next in
+                    let resized = next.height != bounds.height
+                    bounds = next
+                    if resized && following { reader.scrollTo("bottom", anchor: .bottom) }
+                    else { following = ChatFormatting.followsBottom(distance: next.maxY - viewport.size.height) }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if !following {
+                        Button("Jump to latest") { following = true; reader.scrollTo("bottom", anchor: .bottom) }
+                            .buttonStyle(.borderedProminent).padding(12)
                     }
                 }
-                .buttonStyle(.plain)
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isSending)
-                .keyboardShortcut(.return, modifiers: [.command])
             }
-            Text(store.isSending
-                 ? "Waiting for the agent. The run continues on the Mini even if you close this window."
-                 : "Runs execute on the Mini. This window is a view onto them.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(12)
-    }
-
-    private func banner(_ text: String, systemImage: String) -> some View {
-        Label(text, systemImage: systemImage)
-            .font(.caption)
-            .foregroundStyle(.orange)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(.orange.opacity(0.1))
-    }
-
-    private func send() async {
-        let text = draft
-        draft = ""
-        composerFocused = true
-        await store.send(text)
-    }
-
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.18)) {
-            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
         }
     }
-
-    private func agentName(for session: DesktopSession) -> String {
-        store.agents.first { $0.id == session.agentId }?.name ?? session.agentId
-    }
-
-    private static let bottomAnchor = "orion.transcript.bottom"
-    private static let streamingAnchor = "orion.transcript.streaming"
 }
 
 struct MessageBubble: View {
     let message: ChatMessage
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: symbol).font(.caption2).foregroundStyle(tint)
-                Text(label).font(.caption2.weight(.semibold)).foregroundStyle(tint)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(message.role == .user ? "You" : message.role == .failure ? "Failed" : "Agent").fontWeight(.semibold)
+                if message.time.timeIntervalSince1970 > 0 {
+                    Text(ChatFormatting.timeLabel(message.time)).help(message.time.formatted(date: .complete, time: .complete))
+                }
+            }.font(.caption2).foregroundStyle(.secondary)
+            if message.role == .agent { MarkdownReply(text: message.text) }
+            else { Text(verbatim: message.text) }
+            ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, name in Label(name, systemImage: "paperclip") }
+            memoryLine("Memories used", message.citedMemories)
+            memoryLine("Memories saved", message.savedMemories)
+            memoryLine("Lessons learned", message.learnedLessons)
+        }.font(.callout).textSelection(.enabled)
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(message.role == .failure ? Color.orange.opacity(0.1) : Color.secondary.opacity(message.role == .user ? 0.12 : 0.06),
+                    in: RoundedRectangle(cornerRadius: 9))
+        .contextMenu { Button("Copy") { copyChatText(message.text) } }
+    }
+    @ViewBuilder private func memoryLine(_ label: String, _ items: [String]) -> some View {
+        if !items.isEmpty { Text(label + " · " + items.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary) }
+    }
+}
+
+private struct RunCard: View {
+    let run: ChatRun
+    var body: some View {
+        VStack(alignment: .leading) {
+            HStack {
+                Text(run.end == nil ? run.latest?.summary ?? run.latest?.name ?? "Working…" : "Run complete")
+                    .lineLimit(1)
+                Spacer()
+                TimelineView(.animation(minimumInterval: 1, paused: run.end != nil)) { tick in
+                    Text(Duration.seconds(max(0, Int((run.end ?? tick.date).timeIntervalSince(run.time)))).formatted(.time(pattern: .minuteSecond)))
+                        .monospacedDigit()
+                }
+            }.font(.caption)
+            if !run.tools.isEmpty {
+                DisclosureGroup("Details") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(run.tools) { tool in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("\(tool.name) · \(tool.status)").fontWeight(.medium)
+                                let details = [tool.command, tool.output].compactMap { $0 }.joined(separator: "\n")
+                                if !details.isEmpty {
+                                    Text(verbatim: details).font(.system(.caption, design: .monospaced))
+                                        .padding(5).background(.quinary)
+                                }
+                                if let paths = tool.paths { Text(paths.joined(separator: "\n")).font(.caption.monospaced()) }
+                            }
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                }.font(.caption)
             }
-            Text(message.text)
-                .textSelection(.enabled)
-                .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
-            if !message.citedMemories.isEmpty {
-                Text("Memory: \(message.citedMemories.joined(separator: ", "))")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(background, in: RoundedRectangle(cornerRadius: 10))
+        }.padding(8)
     }
+}
 
-    private var label: String {
-        switch message.role {
-        case .user: return "You"
-        case .agent: return "Agent"
-        case .failure: return "Failed"
-        }
+private struct ApprovalCard: View {
+    let store: OrionStore
+    let approval: Approval
+    @State private var working = false
+    var body: some View {
+        VStack(alignment: .leading) {
+            if approval.status == "pending" {
+                Label("Command approval", systemImage: "hand.raised")
+                Text(verbatim: approval.command).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                let location = [approval.host, approval.cwd].compactMap { $0 }.joined(separator: " · ")
+                if !location.isEmpty { Text(location).font(.caption).textSelection(.enabled) }
+                HStack {
+                    decision("Allow once", "allow-once")
+                    decision("Always allow", "allow-always")
+                    decision("Deny", "deny")
+                }.disabled(working)
+            } else { Text("Command \(approval.status) · \(approval.command)").lineLimit(1).help(approval.command) }
+        }.padding(8).background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
-
-    private var symbol: String {
-        switch message.role {
-        case .user: return "person.fill"
-        case .agent: return "sparkles"
-        case .failure: return "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var tint: Color {
-        switch message.role {
-        case .user: return .secondary
-        case .agent: return .accentColor
-        case .failure: return .orange
-        }
-    }
-
-    private var background: some ShapeStyle {
-        switch message.role {
-        case .user: return AnyShapeStyle(.quinary)
-        case .agent: return AnyShapeStyle(.background.secondary)
-        case .failure: return AnyShapeStyle(Color.orange.opacity(0.1))
+    private func decision(_ label: String, _ value: String) -> some View {
+        Button(label) {
+            working = true
+            Task { await store.resolve(approval.id, value); working = false }
         }
     }
 }

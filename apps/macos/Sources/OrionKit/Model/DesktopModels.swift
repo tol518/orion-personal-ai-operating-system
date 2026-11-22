@@ -49,6 +49,12 @@ public struct DesktopSession: Decodable, Sendable, Identifiable, Equatable {
     public let agentId: String
     public let title: String
     public let model: String?
+    var label: String?
+    var thinkingOptions: [String]?
+    var thinkingLevel: String?
+    var parentKey: String?
+    var displayTitle: String { label ?? title }
+    var isMain: Bool { key == "main" || key == "global" || key == "agent:\(agentId):main" }
     public let lastMessagePreview: String?
     public let hasActiveRun: Bool
     public let totalTokens: Int?
@@ -97,6 +103,9 @@ public struct DesktopChatAck: Decodable, Sendable {
         public let title: String
     }
 
+    struct Ack: Decodable, Sendable { let runId: String? }
+    let ack: Ack?
+    let delivered: String?
     public let memoryCandidates: [MemoryCandidate]?
 }
 

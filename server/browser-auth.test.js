@@ -254,6 +254,21 @@ test("the desktop router mounted after the gate is reported", () => {
   assert.ok(problems.some((p) => /\/api\/v1\/desktop router is mounted after the gate/.test(p)), problems.join("\n"));
 });
 
+test("a gated router mounted on /api after the gate is not mistaken for the desktop router", () => {
+  const auth = createBrowserAuth({ password: PASSWORD, port: PORT });
+  const app = express();
+  app.use("/api/v1/desktop", express.Router());
+  app.use("/api/v1/node", express.Router());
+  app.get("/api/health", (_req, res) => res.json({ ok: true }));
+  auth.mountRoutes(app);
+  app.use("/api", auth.gate);
+  app.use("/api", express.Router());
+  assert.deepEqual(auth.inspectGateOrder(app), []);
+  app.use("/api/v1/desktop", express.Router());
+  const problems = auth.inspectGateOrder(app);
+  assert.ok(problems.some((p) => /\/api\/v1\/desktop router is mounted after the gate/.test(p)), problems.join("\n"));
+});
+
 test("missing sign-in routes are reported so a deployment cannot forget mountRoutes", () => {
   const auth = createBrowserAuth({ password: PASSWORD, port: PORT });
   const problems = auth.inspectGateOrder(assembledApp(auth, { withRoutes: false }));

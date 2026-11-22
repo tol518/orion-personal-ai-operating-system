@@ -16,7 +16,7 @@ this app. Revoking it on the Mini does not require rotating anything else.
 
 ```sh
 swift build          # compile
-swift test           # 66 offline unit tests
+swift test           # offline unit tests
 make app             # assemble build/Orion.app (ad-hoc signed)
 make run             # assemble and launch
 ```
@@ -74,7 +74,7 @@ The app shows the client id it will pair as; that is the value for
 | Connection | Mini reachability, pairing, retry and error state |
 | Home | Gateway/BFF status, recent sessions, node summary |
 | Agents | Existing agents and their available models; start a session |
-| Chat | Session list, transcript, streamed replies, failure state |
+| Chat | Agent-grouped conversations, Markdown replies and diagrams, file attachments, steering and stopping, model and device controls, tool activity, approvals, and reply memory details |
 | Nodes | Status and capabilities per paired node, plus one-click remote desktop |
 | Files | Shared folders on the Orion server and connected Node hosts, Quick Look previews, and downloads through a Save dialog |
 | Usage | Token spend by agent and the Codex weekly allowance |

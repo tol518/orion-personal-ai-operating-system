@@ -7,6 +7,7 @@ import type {
   StoredWorkflow,
   WorkflowRun,
 } from "./workflow-types";
+import type { Approval, Decision } from "./chat/workspace";
 import type { OrionPluginManifest } from "./plugin-types";
 import { fileQuery, type FileDevice, type FileRoot, type FileListing, type FileInfo } from "./file-types";
 
@@ -28,7 +29,7 @@ export type ExecutionTargetState = {
   target: ExecutionTarget;
   devices: { mac: ExecutionDevice; windows: ExecutionDevice };
 };
-export type AgentModelOption = { id: string; label: string };
+export type AgentModelOption = { id: string; label: string; reasoning?: boolean };
 export type AgentModels = { agentId: string; current: string | null; models: AgentModelOption[] };
 export type AgentAnimationSpec = {
   columns: number;
@@ -450,9 +451,9 @@ async function postJson<T = any>(path: string, payload: unknown, signal?: AbortS
   return body as T;
 }
 
-async function putJson<T = any>(path: string, payload: unknown): Promise<T> {
+async function putJson<T = any>(path: string, payload: unknown, method = "PUT"): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    method: "PUT",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
@@ -635,7 +636,14 @@ export const api = {
     deleteJson(`/files/local/drops?path=${encodeURIComponent(path)}`, {}),
   deleteNode: (nodeId: string) => deleteJson(`/nodes/${encodeURIComponent(nodeId)}`, {}),
   usage: (range = "7d") => getJson<UsageReport>(`/usage?range=${encodeURIComponent(range)}`),
-  sessions: (limit = 20) => getJson(`/sessions?limit=${limit}`),
+  sessions: (limit = 20, archived = false) => getJson(`/sessions?limit=${limit}&archived=${archived ? 1 : 0}`),
+  abort: (sessionKey: string, runId?: string) => postJson("/chat/abort", { sessionKey, runId }),
+  compact: (key: string) => postJson(`/sessions/${encodeURIComponent(key)}/compact`, {}),
+  thinking: (key: string, level: string) => putJson(`/sessions/${encodeURIComponent(key)}/thinking`, { level }),
+  archive: (key: string, archived: boolean) => putJson(`/sessions/${encodeURIComponent(key)}/archive`, { archived }),
+  rename: (key: string, label: string) => putJson(`/sessions/${encodeURIComponent(key)}`, { label }, "PATCH"),
+  approvals: () => getJson<{ approvals: Approval[] }>("/approvals"),
+  resolveApproval: (id: string, decision: Decision) => postJson(`/approvals/${encodeURIComponent(id)}`, { decision }),
   createSession: (agentId: string, label: string) =>
     postJson("/sessions", { agentId, label }),
   resetSession: (sessionKey: string, agentId?: string) =>
@@ -673,8 +681,8 @@ export const api = {
     postJson<{ ok: true; attachments: StoredAttachment[] }>("/attachments", {
       attachments: await Promise.all(files.map(filePayload)),
     }),
-  chat: (sessionKey: string, message: string, agentId?: string, attachmentIds: string[] = []) =>
-    postJson("/chat", { sessionKey, message, agentId, attachmentIds }),
+  chat: (sessionKey: string, message: string, agentId?: string, attachmentIds: string[] = [], mode?: "steer") =>
+    postJson<{ delivered: "steer" | "turn"; ack?: { runId?: string } }>("/chat", { sessionKey, message, agentId, attachmentIds, mode }),
   huntingAccess: () => getHuntingJson<HuntingAccessState>("/hunting/access"),
   unlockHunting: async (password: string) => {
     const access = await postJson<HuntingAccessState>("/hunting/access", { password });
@@ -916,6 +924,7 @@ export const api = {
 };
 
 async function filePayload(file: File) {
+  if (file.size > 20 * 1024 * 1024) throw new Error(file.name + " exceeds the 20 MB limit");
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(reader.error ?? new Error(`Could not read ${file.name}`));

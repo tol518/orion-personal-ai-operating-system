@@ -186,7 +186,12 @@ export function inspectGateOrder(app, { gate, publicPaths = PUBLIC_API_PATHS } =
     // A mounted Router. Only self-authenticating ones may precede the gate, and these must: the
     // native client and paired computers have no browser origin and cannot pass a cookie check.
     if (layer?.name === "router" && layer.regexp) {
+      // A router mounted on "/api" itself (gated browser routes such as chat) matches every
+      // path below it, including the self-authenticating mounts. It is not one of them, so
+      // only routers whose mount is specific to a self-authenticating prefix are judged here.
+      const mountedOnApiRoot = layer.regexp.test("/api/__gate-order-probe__");
       for (const mount of SELF_AUTHENTICATING_MOUNTS) {
+        if (mountedOnApiRoot) break;
         if (layer.regexp.test(`${mount}/probe`) && gateIndex !== -1 && index > gateIndex) {
           problems.push(`the ${mount} router is mounted after the gate, so its own authentication never runs`);
         }

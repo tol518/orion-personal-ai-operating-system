@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {createChatRouter, createChatState} from "./chat-workspace.js";
 import express from "express";
 import { DesktopAccess } from "./desktop-access.js";
 import { RemoteAccessDirectory } from "./remote-access.js";
@@ -39,7 +40,8 @@ async function boot({ gateway = fakeGateway(), access, deps = {} } = {}) {
     createDesktopApi({
       gateway,
       access: desktopAccess,
-      submitChatTurn: async (input) => ({ ack: { accepted: true }, echo: input }),
+      chatRouter: createChatRouter({gateway, state:createChatState({gateway}), projectSession:toSessionSummary,
+        submitChatTurn: async input => ({ack:{accepted:true},echo:input}), ...deps}),
       chatHistory: async (key) => ({ sessionKey: key, messages: [] }),
       modelOptionsFromConfig: (_config, agentId) => ({
         agentId,
@@ -251,7 +253,8 @@ test("sessions are projected to a stable native shape", async (t) => {
         {
           key: "agent:codex:42",
           derivedTitle: "  Deploy review  ",
-          label: "ignored when a derived title exists",
+          label: "Custom conversation title",
+          thinkingOptions: ["off", "low"],
           model: "anthropic/claude-opus-4",
           updatedAt: 1_757_520_000_000,
           hasActiveRun: true,
@@ -273,6 +276,8 @@ test("sessions are projected to a stable native shape", async (t) => {
       key: "agent:codex:42",
       agentId: "codex",
       title: "Deploy review",
+      label: "Custom conversation title",
+      thinkingOptions: ["off", "low"],
       model: "anthropic/claude-opus-4",
       lastMessagePreview: "on it",
       hasActiveRun: true,
@@ -684,11 +689,11 @@ test("remote access answers 503 when discovery is not configured", async (t) => 
   assert.equal(response.status, 503);
 });
 
-test("no destructive session or node route is exposed in V1", async (t) => {
+test("node deletion stays outside the desktop API", async (t) => {
   const app = await boot();
   t.after(() => app.close());
   const { body } = await pairToken(app.base);
-  for (const route of ["/sessions/agent:main:1", "/nodes/node-1"]) {
+  for (const route of ["/nodes/node-1"]) {
     const response = await fetch(`${app.base}${route}`, {
       method: "DELETE",
       headers: authed(body.token),

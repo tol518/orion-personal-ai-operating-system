@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-const MAX_FILES = 5;
+const MAX_FILES = 8;
 const MAX_BYTES = 20 * 1024 * 1024;
 
 export class AttachmentStore {
@@ -35,7 +35,17 @@ export class AttachmentStore {
   saveMany(values) {
     if (!Array.isArray(values) || values.length === 0) return [];
     if (values.length > MAX_FILES) throw badRequest(`Attach at most ${MAX_FILES} files at a time`);
-    return values.map((value) => this.#save(value));
+    const created = [];
+    this.database.exec("BEGIN");
+    try {
+      const attachments = values.map(value => this.#save(value, created));
+      this.database.exec("COMMIT");
+      return attachments;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      for (const file of created) fs.rmSync(file, { force: true });
+      throw error;
+    }
   }
 
   get(id) {
@@ -99,7 +109,7 @@ export class AttachmentStore {
     this.database.prepare("DELETE FROM memory_attachments WHERE memory_id = ?").run(memoryId);
   }
 
-  #save(value) {
+  #save(value, created) {
     const fileName = safeFileName(value?.fileName);
     const mimeType = String(value?.mimeType ?? "application/octet-stream").split(";")[0].trim().toLowerCase();
     const content = String(value?.content ?? "").replace(/^data:[^;]+;base64,/, "").replace(/\s+/g, "");
@@ -111,6 +121,7 @@ export class AttachmentStore {
     const extension = path.extname(fileName).slice(0, 16);
     const storagePath = path.join(this.directory, `${id}${extension}`);
     fs.writeFileSync(storagePath, bytes, { flag: "wx", mode: 0o600 });
+    created.push(storagePath);
     const createdAt = new Date().toISOString();
     this.database.prepare(`
       INSERT INTO attachments (id, file_name, mime_type, size_bytes, sha256, storage_path, created_at)

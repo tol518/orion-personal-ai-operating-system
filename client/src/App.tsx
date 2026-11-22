@@ -278,11 +278,12 @@ export default function App() {
   const codexDesktopUsage = normalizedTotals(usage?.attribution?.sources?.codexDesktop);
   const combinedUsage = normalizedTotals(usage?.attribution?.combined ?? gatewayTotals);
   const codexWeekly = codexWeeklySummary(usage?.attribution?.codexWeeklyLimit);
-  const selectedSessionExists = sessions.some((session) => session.key === selectedSessionKey);
+  const chatSessions = sessions.filter((session) => !session.internal);
+  const selectedSessionExists = chatSessions.some((session) => session.key === selectedSessionKey);
   const defaultSession =
-    sessions.find((session) => isPrimarySession(session.key)) ??
-    sessions.find((session) => session.key.includes(":dashboard:")) ??
-    sessions[0];
+    chatSessions.find((session) => isPrimarySession(session.key)) ??
+    chatSessions.find((session) => session.key.includes(":dashboard:")) ??
+    chatSessions[0];
   const sessionKey =
     (selectedSessionExists || sessions.length === 0 ? selectedSessionKey : null) ??
     defaultSession?.key ??
@@ -322,7 +323,7 @@ export default function App() {
   }
 
   async function selectChatAgent(agentId: string) {
-    const existing = sessions
+    const existing = chatSessions
       .filter((session) => agentIdFromSessionKey(session.key) === agentId)
       .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0];
     if (existing) {
@@ -375,6 +376,7 @@ export default function App() {
               sessions={sessions}
               agents={agents}
               showSessions
+              onRefresh={load}
               onSelectSession={setSelectedSessionKey}
               onSelectAgent={selectChatAgent}
               onNewChat={createChat}

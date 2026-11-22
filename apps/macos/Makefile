@@ -51,7 +51,7 @@ appintents: build
 			-o $(INTENTS_DIR)/OrionApp.o \
 			Sources/OrionApp/Intents.swift && \
 		ls Sources/OrionApp/*.swift > $(INTENTS_DIR)/sources.txt && \
-		echo "$(PWD)/$(INTENTS_DIR)/OrionApp.swiftconstvalues" > $(INTENTS_DIR)/constvals.txt && \
+		echo "$(CURDIR)/$(INTENTS_DIR)/OrionApp.swiftconstvalues" > $(INTENTS_DIR)/constvals.txt && \
 		"$(PROCESSOR)" \
 			--output $(APP)/Contents/Resources \
 			--toolchain-dir "$(TOOLCHAIN)" \
@@ -101,6 +101,7 @@ app: build
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
 	$(MAKE) icon
 	cp build/Orion.icns $(APP)/Contents/Resources/Orion.icns
+	cp -R $(BUILD_DIR)/Orion_OrionKit.bundle $(APP)/Contents/Resources/
 	cp $(BUILD_DIR)/OrionApp $(APP)/Contents/MacOS/OrionApp
 	printf 'APPL????' > $(APP)/Contents/PkgInfo
 	$(MAKE) appintents
