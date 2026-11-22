@@ -70,10 +70,23 @@ public final class OrionStore {
 
     // MARK: Chat
     public internal(set) var selectedSessionKey: String?
-    public private(set) var messages: [ChatMessage] = []
-    /// The reply currently arriving as deltas, shown beneath the settled transcript.
-    public private(set) var streamingReply: String?
-    public private(set) var isSending = false
+    var conversation = ConversationState()
+    public var messages: [ChatMessage] { conversation.messages }
+    public var streamingReply: String? { conversation.partial }
+    public var isSending: Bool { conversation.busy }
+    var inbox = ApprovalInbox()
+    var archivedSessions: [DesktopSession] = []
+    var showingArchived = false
+    private var lastActiveSession: String?
+    var visibleSessions: [DesktopSession] { showingArchived ? archivedSessions : sessions }
+    var selectedSession: DesktopSession? { (sessions + archivedSessions).first { $0.key == selectedSessionKey } }
+    var chatModels: ChatModels?
+    var executionTarget: ChatTarget?
+    var drafts: [String: ChatDraft] = [:]
+    var submitting: Set<String> = []
+    var changingSessions: Set<String> = []
+    private var sessionRevision = 0
+    private var approvalExpiry: Task<Void, Never>?
     public private(set) var isLoadingTranscript = false
 
     // MARK: Surfaced problems
@@ -215,9 +228,13 @@ public final class OrionStore {
         tailnetPolicy = nil
         tailnetPolicyError = nil
         usage = nil
-        messages = []
+        transcriptGeneration += 1
+        conversation = ConversationState()
+        drafts = [:]
+        approvalExpiry?.cancel()
+        inbox = ApprovalInbox()
+        archivedSessions = []
         selectedSessionKey = nil
-        streamingReply = nil
         gatewayConnected = false
         connection = .needsPairing
     }
@@ -416,10 +433,30 @@ public final class OrionStore {
     public func selectSession(_ key: String) async {
         guard key != selectedSessionKey else { return }
         selectedSessionKey = key
-        messages = []
-        streamingReply = nil
-        isSending = false
+        conversation = ConversationState()
+        chatModels = nil
+        executionTarget = nil
+        async let preferences: Void = loadPreferences(key)
         await loadTranscript(for: key)
+        await preferences
+    }
+
+    func agentName(_ id: String) -> String {
+        switch id {
+        case "main": return "J.A.R.V.I.S."
+        case "codex": return "WALL-E"
+        default: return agents.first { $0.id == id }?.name ?? id
+        }
+    }
+
+    func loadPreferences(_ key: String) async {
+        guard let agent = selectedSession?.agentId else { return }
+        async let target = try? client.target(key)
+        async let models = try? client.models(agent)
+        let values = await (target, models)
+        guard key == selectedSessionKey else { return }
+        executionTarget = values.0
+        chatModels = values.1
     }
 
     private func loadTranscript(for key: String) async {
@@ -428,10 +465,10 @@ public final class OrionStore {
         isLoadingTranscript = true
         defer { if generation == transcriptGeneration { isLoadingTranscript = false } }
         do {
-            let loaded = try await client.history(sessionKey: key)
-            // Discard a response for a session the user has already navigated away from.
+            let loaded = try await client.transcript(key)
             guard generation == transcriptGeneration, key == selectedSessionKey else { return }
-            messages = loaded
+            let history = loaded.restored(key: key, active: selectedSession?.hasActiveRun == true)
+            conversation.mergeHistory(history)
         } catch let error as OrionClientError {
             guard generation == transcriptGeneration else { return }
             lastError = "Could not load this conversation: \(error.localizedDescription)"
@@ -445,13 +482,9 @@ public final class OrionStore {
     public func startSession(agentId: String) async {
         do {
             let created = try await client.createSession(agentId: agentId, label: "From \(settings.clientName)")
+            showingArchived = false
             await refreshSessions()
-            if let created {
-                selectedSessionKey = created
-                messages = []
-                streamingReply = nil
-                await loadTranscript(for: created)
-            }
+            if let created { await selectSession(created) }
         } catch let error as OrionClientError {
             lastError = error.localizedDescription
         } catch {
@@ -460,32 +493,148 @@ public final class OrionStore {
     }
 
     public func refreshSessions() async {
-        guard let loaded = try? await client.sessions() else { return }
-        sessions = loaded
+        sessionRevision += 1
+        let version = sessionRevision
+        async let active = try? client.sessions()
+        let archived = showingArchived ? try? await client.sessions(archived: true) : nil
+        let activeList = await active
+        guard version == sessionRevision else { return }
+        if let activeList { sessions = activeList }
+        if let archived { archivedSessions = archived }
+    }
+
+    func showArchived(_ show: Bool) async {
+        guard showingArchived != show else { return }
+        if show { lastActiveSession = selectedSessionKey }
+        showingArchived = show
+        await refreshSessions()
+        guard showingArchived == show else { return }
+        let rows = visibleSessions
+        let preferred = show ? nil : lastActiveSession
+        if let next = rows.first(where: { $0.key == preferred }) ?? rows.first {
+            await selectSession(next.key)
+        } else {
+            transcriptGeneration += 1
+            isLoadingTranscript = false
+            selectedSessionKey = nil
+            conversation = ConversationState()
+        }
+    }
+
+    func changeSession(_ key: String, _ change: SessionChange) async {
+        guard changingSessions.insert(key).inserted else { return }
+        defer { changingSessions.remove(key) }
+        do {
+            try await client.update(key, change)
+            await refreshSessions()
+            guard selectedSessionKey == key else { return }
+            switch change {
+            case .compact, .reset:
+                conversation = ConversationState()
+                await loadTranscript(for: key)
+            case .archive, .delete:
+                selectedSessionKey = nil
+                conversation = ConversationState()
+            case .model, .target: await loadPreferences(key)
+            default: break
+            }
+        } catch { lastError = error.localizedDescription }
     }
 
     public func send(_ text: String) async {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let sessionKey = selectedSessionKey else { return }
-        let agentId = sessions.first { $0.key == sessionKey }?.agentId
-
-        // Show the user's turn immediately; the BFF echoes it back inside a memory envelope that
-        // only appears in later history reads.
-        messages.append(ChatMessage(role: .user, text: trimmed))
-        isSending = true
-        streamingReply = ""
-        do {
-            _ = try await client.sendChat(sessionKey: sessionKey, message: trimmed, agentId: agentId)
-        } catch let error as OrionClientError {
-            isSending = false
-            streamingReply = nil
-            messages.append(ChatMessage(role: .failure, text: error.localizedDescription))
-            if error.requiresPairing { handleConnectionFailure(error) }
-        } catch {
-            isSending = false
-            streamingReply = nil
-            messages.append(ChatMessage(role: .failure, text: error.localizedDescription))
+        guard let key = selectedSessionKey else { return }
+        do { try await submit(ChatDraft(text: text), to: key) }
+        catch {
+            guard selectedSessionKey == key else { return }
+            conversation.messages.append(ChatMessage(role: .user, text: text.trimmingCharacters(in: .whitespacesAndNewlines)))
+            conversation.messages.append(ChatMessage(role: .failure, text: error.localizedDescription))
         }
+    }
+
+    /// Keep the draft under its session key through both requests. A failed attempt can be
+    /// retried even if the user visits another conversation during the upload.
+    func sendDraft(for key: String) async {
+        guard let draft = drafts[key], !submitting.contains(key) else { return }
+        do {
+            try await submit(draft, to: key)
+            if drafts[key]?.text == draft.text { drafts[key]?.text = "" }
+            let ids = Set(draft.files.map(\.id))
+            drafts[key]?.files.removeAll { ids.contains($0.id) }
+            drafts[key]?.error = nil
+        } catch {
+            drafts[key]?.error = error.localizedDescription
+        }
+    }
+
+    private func submit(_ draft: ChatDraft, to key: String) async throws {
+        let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !draft.files.isEmpty else { return }
+        guard selectedSessionKey == key, submitting.insert(key).inserted else { throw CancellationError() }
+        let generation = transcriptGeneration
+        defer { submitting.remove(key) }
+        let agent = selectedSession?.agentId
+        let ids = draft.files.isEmpty ? [] : try await client.upload(draft.files)
+        guard selectedSessionKey == key, generation == transcriptGeneration else { throw CancellationError() }
+        let busy = conversation.busy
+        var message = ChatMessage(role: .user, text: text)
+        message.attachments = draft.files.map(\.fileName)
+        conversation.begin(message)
+        do {
+            let ack = try await client.sendChat(sessionKey: key, message: text, agentId: agent, attachmentIds: ids, mode: busy ? "steer" : nil)
+            guard key == selectedSessionKey, generation == transcriptGeneration else { return }
+            conversation.acknowledge(ack, at: Date())
+        } catch {
+            if key == selectedSessionKey, generation == transcriptGeneration {
+                conversation.steering = nil
+                conversation.messages.removeAll { $0.id == message.id }
+                let provisional = "local:" + message.id.uuidString
+                if conversation.current == provisional { conversation.finish(provisional, at: Date()) }
+            }
+            if let failure = error as? OrionClientError, failure.requiresPairing { handleConnectionFailure(failure) }
+            throw error
+        }
+    }
+
+    func stop() async {
+        guard let key = selectedSessionKey, let id = conversation.current, !conversation.stopping else { return }
+        conversation.stopping = true
+        do {
+            let aborted = try await client.abort(key, run: id.hasPrefix("local:") ? nil : id)
+            if key == selectedSessionKey { conversation.abortAcknowledged(aborted, for: id, at: Date()) }
+        } catch {
+            if key == selectedSessionKey, conversation.current == id { conversation.stopping = false }
+            lastError = error.localizedDescription
+        }
+    }
+
+    func refreshApprovals() async {
+        let version = inbox.revision
+        if let pending = try? await client.approvals() {
+            inbox.replay(pending, since: version)
+            scheduleApprovalExpiry()
+        }
+    }
+
+    private func scheduleApprovalExpiry() {
+        approvalExpiry?.cancel()
+        guard let next = inbox.items.filter({ $0.status == "pending" }).compactMap(\.expiresAt).min() else { return }
+        approvalExpiry = Task { [weak self] in
+            let delay = max(0, next / 1000 - Date().timeIntervalSince1970)
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self else { return }
+            let now = Date().timeIntervalSince1970 * 1000
+            for item in inbox.items where item.status == "pending" && (item.expiresAt ?? .infinity) <= now {
+                inbox.resolve(item.id, status: "expired")
+            }
+            scheduleApprovalExpiry()
+        }
+    }
+
+    func resolve(_ id: String, _ decision: String) async {
+        do {
+            try await client.resolve(id, decision: decision)
+            inbox.resolve(id, status: decision == "deny" ? "denied" : "approved")
+        } catch { lastError = error.localizedDescription }
     }
 
     public func clearError() {
@@ -546,18 +695,31 @@ public final class OrionStore {
             gatewayConnected = status.connected
             gatewayReason = status.reason
             reconnectAttempt = 0
+            if status.connected { Task { await refreshApprovals() } }
         case "gateway.disconnected":
             gatewayConnected = false
             gatewayReason = "The Mini lost its connection to the OpenClaw gateway."
         case "chat":
             guard let chat = event.decode(ChatEvent.self) else { return }
             handleChat(chat)
+        case "chat.tool":
+            if let tool = event.decode(ChatTool.self), tool.sessionKey == selectedSessionKey { conversation.receive(tool) }
+        case "chat.approval":
+            guard let approval = event.decode(Approval.self) else { return }
+            let isNew = !inbox.items.contains { $0.id == approval.id }
+            inbox.receive(approval)
+            scheduleApprovalExpiry()
+            if isNew && approval.status == "pending" && !NSApplication.shared.isActive {
+                Task { await notifyIfEnabled(title: "Orion approval requested", body: "A command is waiting for your decision.") }
+            }
         case "sessions.changed":
             Task { await refreshSessions() }
         case "node.presence.alive":
-            Task { await refreshNodes() }
+            Task {
+                await refreshNodes()
+                if let key = selectedSessionKey { await loadPreferences(key) }
+            }
         default:
-            // session.tool / session.message / agent carry detail the V1 transcript does not show.
             break
         }
     }
@@ -567,15 +729,7 @@ public final class OrionStore {
         // selected session may write into this transcript.
         if let key = chat.sessionKey, let selected = selectedSessionKey, key != selected { return }
 
-        if chat.isDelta {
-            streamingReply = (streamingReply ?? "") + (chat.deltaText ?? "")
-            return
-        }
-        guard chat.isTerminal else { return }
-        let message = TranscriptFormatter.finalMessage(for: chat, accumulated: streamingReply ?? "")
-        messages.append(message)
-        streamingReply = nil
-        isSending = false
+        guard selectedSessionKey != nil, conversation.receive(chat, at: Date()) else { return }
         Task {
             await notifyIfEnabled(
                 title: chat.isFailure ? "Orion run failed" : "Orion replied",

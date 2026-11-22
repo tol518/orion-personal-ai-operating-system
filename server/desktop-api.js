@@ -182,7 +182,7 @@ export function createDesktopApi({
         const options = config ? modelOptionsFromConfig(config, agent.id) : null;
         return {
           id: agent.id,
-          name: agent.displayName ?? agent.name ?? agent.id,
+          name: firstNonEmpty(agent.identity?.name, agent.displayName, agent.name) ?? agent.id,
           description: typeof agent.description === "string" ? agent.description : null,
           currentModel: options?.current ?? null,
           models: options?.models ?? [],
@@ -503,11 +503,14 @@ export function toNodeSummary(node) {
  */
 export function toSessionSummary(session) {
   const key = String(session?.key ?? "");
+  const label = firstNonEmpty(session?.label);
   const title =
-    firstNonEmpty(session?.derivedTitle, session?.label, session?.displayName) ?? "Untitled session";
+    firstNonEmpty(session?.derivedTitle, label, session?.displayName) ?? "Untitled session";
   return {
     key,
     ...(session?.parentKey && { parentKey: session.parentKey }),
+    ...(label && label !== title && { label }),
+    ...(Array.isArray(session?.thinkingOptions) && { thinkingOptions: session.thinkingOptions }),
     ...(session?.thinkingLevel && { thinkingLevel: session.thinkingLevel }),
     agentId: /^agent:([^:]+):/.exec(key)?.[1] ?? "main",
     title,

@@ -16,6 +16,7 @@ let package = Package(
     targets: [
         .target(
             name: "OrionKit",
+            resources: [.copy("Resources/mermaid.min.js")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(

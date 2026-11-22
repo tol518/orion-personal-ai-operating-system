@@ -210,8 +210,9 @@ public actor OrionClient {
         return response.agents
     }
 
-    public func sessions(limit: Int = 30) async throws -> [DesktopSession] {
-        let response: SessionsResponse = try await send("sessions?limit=\(limit)")
+    public func sessions(limit: Int = 30, archived: Bool = false) async throws -> [DesktopSession] {
+        let query = archived ? "&archived=1" : ""
+        let response: SessionsResponse = try await send("sessions?limit=\(limit)\(query)")
         return response.sessions
     }
 
@@ -370,9 +371,75 @@ public actor OrionClient {
     }
 
     public func history(sessionKey: String) async throws -> [ChatMessage] {
-        let encoded = sessionKey.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? sessionKey
-        let response: HistoryResponse = try await send("sessions/\(encoded)/history")
-        return TranscriptFormatter.messages(from: response)
+        try await TranscriptFormatter.messages(from: transcript(sessionKey))
+    }
+
+    func transcript(_ key: String) async throws -> HistoryResponse {
+        try await send("sessions/\(segment(key))/history")
+    }
+
+    private func segment(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+    }
+
+    func models(_ agent: String) async throws -> ChatModels {
+        try await send("agents/\(segment(agent))/models")
+    }
+
+    func target(_ key: String) async throws -> ChatTarget {
+        try await send("sessions/\(segment(key))/execution-target")
+    }
+
+    func update(_ key: String, _ change: SessionChange) async throws {
+        let path = "sessions/\(segment(key))"
+        switch change {
+        case .rename(let label):
+            _ = try await perform(path, method: "PATCH", body: ["label": label])
+        case .archive(let archived):
+            _ = try await perform(path + "/archive", method: "PUT", body: ["archived": archived])
+        case .thinking(let level):
+            _ = try await perform(path + "/thinking", method: "PUT", body: ["level": level])
+        case .model(let model, let agent):
+            _ = try await perform(path + "/model", method: "PUT", body: ["model": model, "agentId": agent])
+        case .target(let target, let agent):
+            _ = try await perform(path + "/execution-target", method: "PUT", body: ["target": target, "agentId": agent])
+        case .compact:
+            _ = try await sendIgnoringResponse(path + "/compact", method: "POST")
+        case .reset(let agent):
+            _ = try await perform(path + "/reset", method: "POST", body: ["agentId": agent])
+        case .delete(let agent):
+            _ = try await perform(path, method: "DELETE", body: ["agentId": agent])
+        }
+    }
+
+    func approvals() async throws -> [Approval] {
+        struct Response: Decodable { let approvals: [Approval] }
+        let result: Response = try await send("approvals")
+        return result.approvals
+    }
+
+    func resolve(_ id: String, decision: String) async throws {
+        _ = try await perform("approvals/\(segment(id))", method: "POST", body: ["decision": decision])
+    }
+
+    func abort(_ key: String, run: String?) async throws -> Bool {
+        struct Response: Decodable { let aborted: Bool }
+        var body = ["sessionKey": key]
+        body["runId"] = run
+        let response: Response = try await send("chat/abort", method: "POST", body: body)
+        return response.aborted
+    }
+
+    func upload(_ files: [ChatAttachment]) async throws -> [String] {
+        struct Response: Decodable {
+            struct File: Decodable { let id: String }
+            let attachments: [File]
+        }
+        let response: Response = try await send("attachments", method: "POST", body: ["attachments": files])
+        guard response.attachments.count == files.count else {
+            throw OrionClientError.decoding("Missing uploaded attachment")
+        }
+        return response.attachments.map(\.id)
     }
 
     // MARK: - Writes
@@ -390,16 +457,18 @@ public actor OrionClient {
         return response.sessionKey
     }
 
-    public func sendChat(sessionKey: String, message: String, agentId: String?) async throws -> DesktopChatAck {
+    public func sendChat(sessionKey: String, message: String, agentId: String?, attachmentIds: [String] = [], mode: String? = nil) async throws -> DesktopChatAck {
         struct Body: Encodable {
             let sessionKey: String
             let message: String
+            let attachmentIds: [String]
+            let mode: String?
             let agentId: String?
         }
         return try await send(
             "chat",
             method: "POST",
-            body: Body(sessionKey: sessionKey, message: message, agentId: agentId)
+            body: Body(sessionKey: sessionKey, message: message, attachmentIds: attachmentIds, mode: mode, agentId: agentId)
         )
     }
 
@@ -469,7 +538,7 @@ public actor OrionClient {
         _ path: String,
         method: String,
         body: (some Encodable)?,
-        authenticated: Bool
+        authenticated: Bool = true
     ) async throws -> Data {
         var request = try authorizedRequest(path: path, method: method, authenticated: authenticated)
         if let body {

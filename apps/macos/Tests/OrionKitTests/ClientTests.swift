@@ -247,3 +247,143 @@ final class ClientIdentityTests: XCTestCase {
         XCTAssertNotEqual(SettingsStore.generateClientId(), SettingsStore.generateClientId())
     }
 }
+
+private final class ChatRequestStub: URLProtocol {
+    static var status = 200
+    static var respond: ((URLRequest) -> String)?
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let json = Self.respond?(request) ?? "{}"
+        let response = HTTPURLResponse(url: request.url!, statusCode: Self.status, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(json.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+final class ChatRequestTests: XCTestCase {
+    func testWorkspaceRequests() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ChatRequestStub.self]
+        let credentials = InMemoryCredentialStore()
+        try credentials.save(token: "test-token", forHost: "mini.example:4820")
+        let client = OrionClient(credentials: credentials, session: URLSession(configuration: config))
+        try await client.configure(host: "mini.example")
+        defer { ChatRequestStub.respond = nil }
+        func check(_ method: String, _ path: String, _ body: [String: Any]? = nil, reply: String = "{}",
+                   action: () async throws -> Void) async throws {
+            let received = expectation(description: path)
+            ChatRequestStub.respond = { request in
+                XCTAssertEqual(request.url?.absoluteString, "http://mini.example:4820/api/v1/desktop/" + path)
+                XCTAssertEqual(request.httpMethod, method)
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+                var data = request.httpBody ?? Data()
+                if let stream = request.httpBodyStream {
+                    stream.open()
+                    defer { stream.close() }
+                    var buffer = [UInt8](repeating: 0, count: 1024)
+                    while true {
+                        let n = stream.read(&buffer, maxLength: buffer.count)
+                        if n <= 0 { break }
+                        data.append(contentsOf: buffer.prefix(n))
+                    }
+                }
+                if let body {
+                    let object = (try? JSONSerialization.jsonObject(with: data)) as? NSDictionary
+                    XCTAssertEqual(object, body as NSDictionary)
+                } else { XCTAssertTrue(data.isEmpty) }
+                received.fulfill()
+                return reply
+            }
+            try await action()
+            await fulfillment(of: [received], timeout: 2)
+        }
+
+        let key = "agent:a/b"
+        let route = "sessions/agent%3Aa%2Fb"
+        try await check("GET", "sessions?limit=30&archived=1", reply: #"{"sessions":[]}"#) {
+            _ = try await client.sessions(archived: true)
+        }
+        try await check("GET", route + "/history", reply: #"{"messages":[]}"#) { _ = try await client.transcript(key) }
+        try await check("GET", "agents/a%2Fb/models", reply: #"{"models":[]}"#) { _ = try await client.models("a/b") }
+        try await check("GET", route + "/execution-target", reply: #"{"target":"neutral","devices":{}}"#) {
+            _ = try await client.target(key)
+        }
+        let changes: [(SessionChange, String, String, [String: Any]?)] = [
+            (.rename("new"), "PATCH", "", ["label": "new"]),
+            (.thinking("low"), "PUT", "/thinking", ["level": "low"]),
+            (.model("m", agent: "a"), "PUT", "/model", ["model": "m", "agentId": "a"]),
+            (.target("neutral", agent: "a"), "PUT", "/execution-target", ["target": "neutral", "agentId": "a"]),
+            (.archive(true), "PUT", "/archive", ["archived": true]),
+            (.archive(false), "PUT", "/archive", ["archived": false]),
+            (.compact, "POST", "/compact", nil),
+            (.reset("a"), "POST", "/reset", ["agentId": "a"]),
+            (.delete("a"), "DELETE", "", ["agentId": "a"])
+        ]
+        for (change, method, suffix, body) in changes {
+            try await check(method, route + suffix, body) { try await client.update(key, change) }
+        }
+        try await check("GET", "approvals", reply: #"{"approvals":[]}"#) { _ = try await client.approvals() }
+        try await check("POST", "approvals/a%2Fb", ["decision": "allow-once"]) {
+            try await client.resolve("a/b", decision: "allow-once")
+        }
+        try await check("POST", "chat/abort", ["sessionKey": key, "runId": "r"], reply: #"{"aborted":true}"#) {
+            _ = try await client.abort(key, run: "r")
+        }
+        try await check("POST", "chat/abort", ["sessionKey": key], reply: #"{"ok":true,"aborted":false}"#) {
+            let stopped = try await client.abort(key, run: nil)
+            XCTAssertFalse(stopped)
+        }
+        try await check("POST", "attachments", ["attachments": [["fileName": "x.txt", "mimeType": "text/plain", "content": "eA=="]]],
+                        reply: #"{"attachments":[{"id":"f"}]}"#) {
+            let ids = try await client.upload([ChatAttachment(fileName: "x.txt", mimeType: "text/plain", content: Data("x".utf8))])
+            XCTAssertEqual(ids, ["f"])
+        }
+        try await check("POST", "chat", ["message": "next", "sessionKey": key, "agentId": "a", "mode": "steer", "attachmentIds": ["f"]],
+                        reply: #"{"delivered":"steer","ack":{"runId":"next"}}"#) {
+            let result = try await client.sendChat(sessionKey: key, message: "next", agentId: "a", attachmentIds: ["f"], mode: "steer")
+            XCTAssertEqual(result.ack?.runId, "next")
+        }
+    }
+}
+
+extension ChatRequestTests {
+    @MainActor
+    func testFailedSubmissionKeepsOriginalSessionDraftAndRunningReply() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ChatRequestStub.self]
+        let credentials = InMemoryCredentialStore()
+        try credentials.save(token: "token", forHost: "mini.example:4820")
+        let client = OrionClient(credentials: credentials, session: URLSession(configuration: config))
+        try await client.configure(host: "mini.example")
+        let suite = "app.orion.tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = OrionStore(client: client, settingsStore: SettingsStore(defaults: defaults), notifier: SilentNotifier())
+        store.selectedSessionKey = "s"
+        store.handle(ServerSentEvent(name: "chat", data: #"{"runId":"r","sessionKey":"s","state":"delta","deltaText":"working"}"#))
+        let file = ChatAttachment(fileName: "note.txt", mimeType: "text/plain", content: Data("one".utf8))
+        store.drafts["s"] = ChatDraft(text: "follow", files: [file])
+        defer { ChatRequestStub.respond = nil; ChatRequestStub.status = 200 }
+        for failUpload in [true, false] {
+            ChatRequestStub.respond = { request in
+                if request.url?.lastPathComponent == "attachments", !failUpload {
+                    ChatRequestStub.status = 200
+                    return #"{"attachments":[{"id":"uploaded"}]}"#
+                }
+                ChatRequestStub.status = 400
+                return #"{"ok":false,"error":"Request refused"}"#
+            }
+            await store.sendDraft(for: "s")
+            XCTAssertEqual(store.drafts["s"]?.text, "follow")
+            XCTAssertEqual(store.drafts["s"]?.files.map(\.id), [file.id])
+            XCTAssertEqual(store.drafts["s"]?.error, "Request refused")
+            XCTAssertTrue(store.messages.isEmpty)
+            XCTAssertEqual(store.streamingReply, "working")
+            XCTAssertEqual(store.conversation.current, "r")
+            XCTAssertNil(store.conversation.steering)
+        }
+    }
+}

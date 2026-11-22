@@ -253,7 +253,8 @@ test("sessions are projected to a stable native shape", async (t) => {
         {
           key: "agent:codex:42",
           derivedTitle: "  Deploy review  ",
-          label: "ignored when a derived title exists",
+          label: "Custom conversation title",
+          thinkingOptions: ["off", "low"],
           model: "anthropic/claude-opus-4",
           updatedAt: 1_757_520_000_000,
           hasActiveRun: true,
@@ -275,6 +276,8 @@ test("sessions are projected to a stable native shape", async (t) => {
       key: "agent:codex:42",
       agentId: "codex",
       title: "Deploy review",
+      label: "Custom conversation title",
+      thinkingOptions: ["off", "low"],
       model: "anthropic/claude-opus-4",
       lastMessagePreview: "on it",
       hasActiveRun: true,
