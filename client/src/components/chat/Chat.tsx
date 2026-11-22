@@ -7,7 +7,7 @@ import { Conversation } from "./Conversation";
 import { useApprovals } from "./useApprovals";
 import { api } from "../../lib/api";
 import { useStreamEvent } from "../../hooks/useStreamEvent";
-import { ChatSheet } from "./ChatSheet";
+import { ChatSheet, closeChatSheet } from "./ChatSheet";
 import "./workspace.css";
 
 const desktopQuery = window.matchMedia("(min-width: 768px)");
@@ -157,13 +157,13 @@ export default function Chat({
       onSelectSession={(key) => {
         if (archived) setArchivedKey(key);
         else onSelectSession?.(key);
-        conversations.current?.close();
+        void closeChatSheet(conversations.current);
       }}
       onNewChat={async () => {
         await onNewChat?.();
         setArchived(false);
         setListed(null);
-        conversations.current?.close();
+        void closeChatSheet(conversations.current);
       }}
       onRemoveSession={async (s) => {
         await onRemoveSession?.(s);

@@ -13,7 +13,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { AgentRoomSession, AgentRoomAgent } from "../AgentRoom";
 import { chatAgentName, EMPTY_EXECUTION_STATE } from "../../lib/chat/messages";
-import { ChatSheet } from "./ChatSheet";
+import { ChatSheet, closeChatSheet } from "./ChatSheet";
 
 export function ConversationPreferences({
   sessionKey,
@@ -92,11 +92,15 @@ export function ConversationPreferences({
     setAgentBusy(true);
     setAgentError(null);
     try {
+      if (sheet) await closeChatSheet(settings.current);
       await onSelectAgent(nextAgentId);
     } catch (cause) {
       setAgentError(
         cause instanceof Error ? cause.message : "Could not switch agent",
       );
+      if (sheet && settings.current && !settings.current.open) {
+        settings.current.showModal();
+      }
     } finally {
       setAgentBusy(false);
     }

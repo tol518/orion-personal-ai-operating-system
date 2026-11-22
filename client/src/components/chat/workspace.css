@@ -411,6 +411,15 @@
     animation: orion-chat-backdrop-enter 180ms ease-out;
   }
 
+  .orion-chat-sheet[open][data-closing] {
+    pointer-events: none;
+    animation: orion-chat-sheet-exit 220ms ease-in forwards;
+  }
+
+  .orion-chat-sheet[open][data-closing]::backdrop {
+    animation: orion-chat-backdrop-exit 180ms ease-in forwards;
+  }
+
   @keyframes orion-chat-sheet-enter {
     from {
       transform: translateY(100%);
@@ -428,6 +437,18 @@
 
     to {
       opacity: 1;
+    }
+  }
+
+  @keyframes orion-chat-sheet-exit {
+    to {
+      transform: translateY(100%);
+    }
+  }
+
+  @keyframes orion-chat-backdrop-exit {
+    to {
+      opacity: 0;
     }
   }
 }
