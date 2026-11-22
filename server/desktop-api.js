@@ -21,6 +21,8 @@ export const DESKTOP_EVENTS = new Set([
   "gateway.status",
   "gateway.disconnected",
   "chat",
+  "chat.tool",
+  "chat.approval",
   "agent",
   "session.tool",
   "session.message",
@@ -66,7 +68,7 @@ const CAPABILITY_MAP = [
  * @param {object} deps
  * @param {{ request: Function, status: Function }} deps.gateway  existing gateway client
  * @param {DesktopAccess} deps.access                             desktop credential boundary
- * @param {Function} deps.submitChatTurn                          the same path /api/chat uses
+ * @param {Function} deps.chatRouter                              shared workspace routes
  * @param {Function} deps.chatHistory                             bounded history reader
  * @param {Function} deps.modelOptionsFromConfig                  existing model projection
  * @param {Function} deps.subscribe                               registers an SSE responder
@@ -77,7 +79,7 @@ export function createDesktopApi({
   gateway,
   files,
   access,
-  submitChatTurn,
+  chatRouter,
   chatHistory,
   modelOptionsFromConfig,
   subscribe,
@@ -130,6 +132,8 @@ export function createDesktopApi({
     req.desktopClient = client;
     next();
   });
+
+  if (chatRouter) router.use(chatRouter);
 
   if (files) router.use("/files", createDeviceFilesApi({
     files,
@@ -191,20 +195,6 @@ export function createDesktopApi({
   });
 
   // ---- Sessions -----------------------------------------------------------
-  router.get("/sessions", async (req, res) => {
-    const limit = boundedLimit(req.query.limit, 20, 100);
-    try {
-      const result = await gateway.request("sessions.list", {
-        limit,
-        includeDerivedTitles: true,
-        includeLastMessage: true,
-      });
-      ok(res, { sessions: (result?.sessions ?? []).map(toSessionSummary) });
-    } catch (err) {
-      fail(res, err);
-    }
-  });
-
   router.post("/sessions", async (req, res) => {
     const agentId = typeof req.body?.agentId === "string" ? req.body.agentId.trim() : "";
     const label = typeof req.body?.label === "string" ? req.body.label.trim() : "";
@@ -221,25 +211,6 @@ export function createDesktopApi({
   router.get("/sessions/:key/history", async (req, res) => {
     try {
       ok(res, await chatHistory(req.params.key));
-    } catch (err) {
-      fail(res, err);
-    }
-  });
-
-  // ---- Chat ---------------------------------------------------------------
-  // Delegates to the identical function /api/chat uses, so memory retrieval, execution policy,
-  // attachment grants, and safety behavior stay in one place for both clients.
-  router.post("/chat", async (req, res) => {
-    const sessionKey = typeof req.body?.sessionKey === "string" ? req.body.sessionKey.trim() : "";
-    const message = String(req.body?.message ?? "");
-    const agentId = typeof req.body?.agentId === "string" ? req.body.agentId.trim() : "";
-    if (!sessionKey || !message.trim()) {
-      return fail(res, "sessionKey and a message are required", 400);
-    }
-    try {
-      // Attachments are not part of the native V1 surface; an empty grant keeps the shared
-      // chat path's contract intact without exposing the attachment store to the desktop.
-      ok(res, await submitChatTurn({ sessionKey, message, agentId, attachmentIds: [] }));
     } catch (err) {
       fail(res, err);
     }
@@ -536,6 +507,8 @@ export function toSessionSummary(session) {
     firstNonEmpty(session?.derivedTitle, session?.label, session?.displayName) ?? "Untitled session";
   return {
     key,
+    ...(session?.parentKey && { parentKey: session.parentKey }),
+    ...(session?.thinkingLevel && { thinkingLevel: session.thinkingLevel }),
     agentId: /^agent:([^:]+):/.exec(key)?.[1] ?? "main",
     title,
     model: firstNonEmpty(session?.model) ?? null,
@@ -572,10 +545,4 @@ function shortReason(error) {
   if (/ECONNREFUSED|connect|refused/i.test(text)) return "gateway not reachable from the host";
   if (/timeout|ETIMEDOUT/i.test(text)) return "gateway connection timed out";
   return "gateway connection failed";
-}
-
-function boundedLimit(value, fallback, max) {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
-  return Math.min(parsed, max);
 }

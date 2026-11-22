@@ -14,7 +14,8 @@ import { FileDrops, parseDropLimit } from "./file-drops.js";
 import { createDeviceFilesApi, createNodeFilesApi } from "./device-files-api.js";
 import { loadOrionPlugins, parseOrionPluginPaths } from "./orion-plugin-runtime.js";
 import { DesktopAccess } from "./desktop-access.js";
-import { createDesktopApi, desktopEventFrame } from "./desktop-api.js";
+import { createChatRouter, createChatState } from "./chat-workspace.js";
+import { createDesktopApi, desktopEventFrame, toSessionSummary } from "./desktop-api.js";
 import { RemoteAccessDirectory } from "./remote-access.js";
 import { SecurityRemediator } from "./security-review.js";
 import { createNodeBindInspector, inspectLocalBinds, isLoopback } from "./exposure.js";
@@ -402,7 +403,12 @@ const sseClients = new Set();
 // Native clients read the same events through the same broadcast, narrowed to DESKTOP_EVENTS.
 // Keeping one fan-out means a new browser event cannot silently diverge from the desktop stream.
 const desktopSseClients = new Set();
-const sessionAttachmentGrants = new Map();
+const chatState = createChatState({ gateway, database: attachmentStore.database, broadcast, ownsInternalSession });
+// Index grants by turn so a queued prompt cannot replace the running reply's attachments.
+const turnAttachmentGrants = new Map();
+function grantKey(sessionKey, runId) {
+  return JSON.stringify([sessionKey, runId]);
+}
 
 function broadcast(event, data) {
   const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -442,6 +448,8 @@ const INTERNAL_DOCUMENT_SESSIONS = new Set([
 const FORWARDED_EVENTS = new Set([
   "chat",
   "agent",
+  "exec.approval.requested",
+  "exec.approval.resolved",
   "session.tool",
   "session.message",
   "sessions.changed",
@@ -450,20 +458,27 @@ const FORWARDED_EVENTS = new Set([
   "node.pair.resolved",
   "gateway.disconnected",
 ]);
+function ownsInternalSession(key) {
+  return lunaRunner.ownsSession(key) ||
+      cvEditor.ownsSession(key) ||
+      jobDiscovery.ownsSession(key) ||
+      jobApplications.ownsSession(key) ||
+      workflowLearner.ownsSession(key) ||
+      workflowRunner.ownsSession(key) ||
+      customExtractorBuilder.ownsSession(key) ||
+      INTERNAL_DOCUMENT_SESSIONS.has(key);
+}
 gateway.on("event", async (event, payload) => {
-  if (
-    event === "chat" &&
-    (lunaRunner.ownsSession(payload?.sessionKey) ||
-      cvEditor.ownsSession(payload?.sessionKey) ||
-      jobDiscovery.ownsSession(payload?.sessionKey) ||
-      jobApplications.ownsSession(payload?.sessionKey) ||
-      workflowLearner.ownsSession(payload?.sessionKey) ||
-      workflowRunner.ownsSession(payload?.sessionKey) ||
-      customExtractorBuilder.ownsSession(payload?.sessionKey) ||
-      INTERNAL_DOCUMENT_SESSIONS.has(payload?.sessionKey))
-  ) return;
+  if (event === "chat" && chatState.internal(payload?.sessionKey)) return;
   if (!FORWARDED_EVENTS.has(event)) return;
+  chatState.event(event, payload);
+  if (event.startsWith("exec.approval.")) return;
+  const terminalKey = event === "chat" ? grantKey(payload?.sessionKey, payload?.runId) : null;
+  if (event === "chat" && ["error", "aborted"].includes(payload?.state)) turnAttachmentGrants.delete(terminalKey);
+  if (event === "gateway.disconnected") turnAttachmentGrants.clear();
   if (event === "chat" && payload?.state === "final") {
+    const allowedAttachments = turnAttachmentGrants.get(terminalKey) ?? new Set();
+    turnAttachmentGrants.delete(terminalKey);
     try {
       const actorAgentId = /^agent:([^:]+):/.exec(payload?.sessionKey ?? "")?.[1] ?? "main";
       const decorated = decorateChatEvent(payload, memories, actorAgentId);
@@ -488,7 +503,6 @@ gateway.on("event", async (event, payload) => {
         for (const action of decorated.memoryActions) {
           try {
             if (action.kind === "memory") {
-              const allowedAttachments = sessionAttachmentGrants.get(payload?.sessionKey) ?? new Set();
               action.payload.attachmentIds = (action.payload.attachmentIds ?? []).filter((id) => allowedAttachments.has(id));
               const memory = await memories.create(action.payload, "agent");
               attachmentStore.setForMemory(memory.id, action.payload.attachmentIds);
@@ -510,7 +524,6 @@ gateway.on("event", async (event, payload) => {
         }
       }
       const { managedMemoryUpserts: _managedMemoryUpserts, memoryActions: _memoryActions, ...publicPayload } = decorated;
-      sessionAttachmentGrants.delete(payload?.sessionKey);
       broadcast(event, { ...publicPayload, learnedLessons, savedMemories });
       return;
     } catch (error) {
@@ -519,11 +532,18 @@ gateway.on("event", async (event, payload) => {
   }
   broadcast(event, payload);
 });
-gateway.on("status", (status) => broadcast("gateway.status", status));
+gateway.on("status", (status) => {
+  if (status.connected) chatState.reconnect();
+  broadcast("gateway.status", status);
+});
 
 // ---- REST -----------------------------------------------------------------
 const app = express();
-app.use(express.json({ limit: "30mb" }));
+const jsonBody = express.json({ limit: "30mb" });
+app.use((req, res, next) => {
+  if (req.method === "POST" && ["/api/attachments", "/api/v1/desktop/attachments"].includes(req.path)) return next();
+  return jsonBody(req, res, next);
+});
 
 const ok = (res, payload) => res.json({ ok: true, ...payload });
 const fail = (res, err, code = 502) =>
@@ -532,6 +552,27 @@ const fail = (res, err, code = 502) =>
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 browserAuth.mountRoutes(app);
+
+const chatRouter = createChatRouter({
+  gateway,
+  state: chatState,
+  attachmentStore,
+  submitChatTurn,
+  modelOptionsFromConfig,
+  executionTargets,
+  getExecutionDevices,
+  patchSessionExecutionTarget,
+  projectSession: toSessionSummary,
+  // A steer replaces the active run with a new one: carry the interrupted run's grants over.
+  grantSteeredAttachments(sessionKey, runId, ids, previousRunId) {
+    const key = grantKey(sessionKey, runId);
+    const grants = new Set(
+      turnAttachmentGrants.get(key) ?? turnAttachmentGrants.get(grantKey(sessionKey, previousRunId)) ?? [],
+    );
+    for (const id of ids) grants.add(id);
+    turnAttachmentGrants.set(key, grants);
+  },
+});
 
 // Native macOS client surface. Mounted ahead of the browser cookie gate below on purpose:
 // Express matches "/api" as a prefix, so mounting it after would apply the cookie and
@@ -543,7 +584,7 @@ app.use(
     gateway,
     files: deviceFiles,
     access: desktopAccess,
-    submitChatTurn,
+    chatRouter,
     chatHistory: readChatHistory,
     modelOptionsFromConfig,
     subscribe: subscribeDesktopEvents,
@@ -567,6 +608,7 @@ app.use(
 app.use("/api/v1/node", createNodeFilesApi({ files: deviceFiles }));
 
 app.use("/api", browserAuth.gate);
+app.use("/api", chatRouter);
 app.use("/api/files", createDeviceFilesApi({ files: deviceFiles }));
 
 const orionPlugins = await loadOrionPlugins({
@@ -580,14 +622,6 @@ const orionPlugins = await loadOrionPlugins({
 app.get("/api/plugins", (_req, res) => ok(res, orionPlugins.manifest()));
 
 app.get("/api/status", (_req, res) => ok(res, { status: gateway.status() }));
-
-app.post("/api/attachments", (req, res) => {
-  try {
-    ok(res, { attachments: attachmentStore.saveMany(req.body?.attachments) });
-  } catch (err) {
-    fail(res, err, 400);
-  }
-});
 
 app.get("/api/attachments/:id", (req, res) => {
   try {
@@ -730,22 +764,6 @@ app.get("/api/usage", async (req, res) => {
   }
 });
 
-app.get("/api/sessions", async (req, res) => {
-  const limit = Number(req.query.limit ?? 20);
-  try {
-    ok(
-      res,
-      await gateway.request("sessions.list", {
-        limit,
-        includeDerivedTitles: true,
-        includeLastMessage: true,
-      }),
-    );
-  } catch (err) {
-    fail(res, err);
-  }
-});
-
 app.post("/api/sessions", async (req, res) => {
   const agentId = typeof req.body?.agentId === "string" ? req.body.agentId.trim() : "main";
   const label = typeof req.body?.label === "string" ? req.body.label.trim() : "";
@@ -758,59 +776,6 @@ app.post("/api/sessions", async (req, res) => {
         ...(label ? { label } : {}),
       }),
     );
-  } catch (err) {
-    fail(res, err, 400);
-  }
-});
-
-app.post("/api/sessions/:key/reset", async (req, res) => {
-  const agentId = typeof req.body?.agentId === "string" ? req.body.agentId.trim() : "";
-  try {
-    ok(
-      res,
-      await gateway.request("sessions.reset", {
-        key: req.params.key,
-        ...(agentId ? { agentId } : {}),
-        reason: "new",
-      }),
-    );
-  } catch (err) {
-    fail(res, err, 400);
-  }
-});
-
-app.delete("/api/sessions/:key", async (req, res) => {
-  const agentId = typeof req.body?.agentId === "string" ? req.body.agentId.trim() : "";
-  try {
-    const result = await gateway.request("sessions.delete", {
-      key: req.params.key,
-      ...(agentId ? { agentId } : {}),
-      deleteTranscript: true,
-    });
-    executionTargets.delete(req.params.key);
-    ok(res, result);
-  } catch (err) {
-    fail(res, err, 400);
-  }
-});
-
-app.get("/api/sessions/:key/execution-target", async (req, res) => {
-  try {
-    const devices = await getExecutionDevices();
-    ok(res, { target: executionTargets.get(req.params.key), devices });
-  } catch (err) {
-    fail(res, err);
-  }
-});
-
-app.put("/api/sessions/:key/execution-target", async (req, res) => {
-  const target = typeof req.body?.target === "string" ? req.body.target.trim() : "";
-  const agentId = typeof req.body?.agentId === "string" ? req.body.agentId.trim() : "";
-  try {
-    const devices = await getExecutionDevices();
-    await patchSessionExecutionTarget(req.params.key, agentId, target, devices);
-    executionTargets.set(req.params.key, target);
-    ok(res, { target, devices });
   } catch (err) {
     fail(res, err, 400);
   }
@@ -958,14 +923,6 @@ function isModelAllowed(configPayload, agentId, model) {
   return modelOptionsFromConfig(configPayload, agentId).models.some((entry) => entry.id === model);
 }
 
-app.get("/api/agents/:agentId/models", async (req, res) => {
-  try {
-    ok(res, modelOptionsFromConfig(await gateway.request("config.get", {}), req.params.agentId));
-  } catch (err) {
-    fail(res, err);
-  }
-});
-
 app.put("/api/agents/:agentId/default-model", async (req, res) => {
   const agentId = req.params.agentId.trim();
   const model = typeof req.body?.model === "string" ? req.body.model.trim() : "";
@@ -993,35 +950,9 @@ app.put("/api/agents/:agentId/default-model", async (req, res) => {
   }
 });
 
-app.put("/api/sessions/:key/model", async (req, res) => {
-  const agentId = typeof req.body?.agentId === "string" ? req.body.agentId.trim() : "";
-  const model = typeof req.body?.model === "string" ? req.body.model.trim() : "";
-  if (!agentId || !model) return fail(res, "agentId and model required", 400);
-  try {
-    const config = await gateway.request("config.get", {});
-    if (!isModelAllowed(config, agentId, model)) {
-      return fail(res, "model is not enabled for this agent", 400);
-    }
-    ok(
-      res,
-      await gateway.request("sessions.patch", {
-        key: req.params.key,
-        agentId,
-        model,
-      }),
-    );
-  } catch (err) {
-    fail(res, err, 400);
-  }
-});
-
 // Shared so the native client reads history through the same bounded envelope as the browser.
 function readChatHistory(sessionKey) {
-  return gateway.request("chat.history", {
-    sessionKey,
-    limit: 50,
-    maxChars: CHAT_HISTORY_MAX_CHARS,
-  });
+  return chatState.history(sessionKey, CHAT_HISTORY_MAX_CHARS);
 }
 
 app.get("/api/history", async (req, res) => {
@@ -2427,10 +2358,13 @@ async function submitChatTurn({ sessionKey, message, agentId, attachmentIds = []
     ...userAttachments.map(({ id }) => id),
     ...memoryAttachments.map(({ id }) => id),
   ]);
-  sessionAttachmentGrants.set(sessionKey, new Set([
+  const idempotencyKey = randomUUID();
+  const key = grantKey(sessionKey, idempotencyKey);
+  const granted = new Set([
     ...userAttachments.map(({ id }) => id),
     ...memoryAttachments.map(({ id }) => id),
-  ]));
+  ]);
+  turnAttachmentGrants.set(key, granted);
   neuralEngine.recordRetrieval(readableRelevantMemories.map(({ id }) => id));
   const ack = await gateway.request("chat.send", {
     sessionKey,
@@ -2445,26 +2379,19 @@ async function submitChatTurn({ sessionKey, message, agentId, attachmentIds = []
     ),
     ...(gatewayAttachments.length ? { attachments: gatewayAttachments } : {}),
     deliver: false,
-    idempotencyKey: randomUUID(),
+    idempotencyKey,
+  }).catch((error) => {
+    turnAttachmentGrants.delete(key);
+    throw error;
   });
+  if (ack?.runId && ack.runId !== idempotencyKey && turnAttachmentGrants.delete(key)) {
+    turnAttachmentGrants.set(grantKey(sessionKey, ack.runId), granted);
+  }
   return {
     ack,
     memoryCandidates: readableRelevantMemories.map(({ id, title }) => ({ id, title })),
   };
 }
-
-app.post("/api/chat", async (req, res) => {
-  const { sessionKey, message, agentId, attachmentIds = [] } = req.body ?? {};
-  const userMessage = String(message ?? "");
-  if (!sessionKey || (!userMessage.trim() && !attachmentIds.length)) {
-    return fail(res, "sessionKey and a message or attachment are required", 400);
-  }
-  try {
-    ok(res, await submitChatTurn({ sessionKey, message, agentId, attachmentIds }));
-  } catch (err) {
-    fail(res, err);
-  }
-});
 
 function withMemoryAttachments(memory) {
   return { ...memory, attachments: attachmentStore.forMemory(memory.id) };

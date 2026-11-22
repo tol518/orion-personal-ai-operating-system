@@ -4,6 +4,8 @@ type Handler = (data: any) => void;
 const KNOWN_EVENTS = [
   "gateway.status",
   "chat",
+  "chat.tool",
+  "chat.approval",
   "agent",
   "session.tool",
   "session.message",
@@ -24,6 +26,11 @@ let source: EventSource | null = null;
 function ensureSource() {
   if (source) return;
   source = new EventSource("/api/events");
+  let opened=false;
+  source.addEventListener("open",()=>{
+    if(opened) listeners.get("stream.reconnected")?.forEach(cb=>cb({}));
+    opened=true;
+  });
   for (const ev of KNOWN_EVENTS) {
     source.addEventListener(ev, (e: MessageEvent) => {
       let data: unknown;

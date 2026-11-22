@@ -79,8 +79,23 @@ client key (5 attempts / 5 minutes) by the same logic the existing access gates 
 | `GET /api/v1/desktop/agents` | gateway `agents.list`, then `config.get` for per-agent models | Same projection the web client sees, minus sprite/appearance payloads the native UI does not use. |
 | `GET /api/v1/desktop/sessions` | gateway `sessions.list` | `includeDerivedTitles` and `includeLastMessage`, matching `/api/sessions`. Projected to a stable native shape: the agent id is derived from the session key the same way the web client derives it, and the title falls back through `derivedTitle` → `label` → `displayName`. |
 | `POST /api/v1/desktop/sessions` | gateway `sessions.create` | Requires an existing `agentId`. Does not create agents. |
-| `GET /api/v1/desktop/sessions/:key/history` | gateway `chat.history` | Bounded by the same `CHAT_HISTORY_MAX_CHARS` envelope as `/api/history`. |
-| `POST /api/v1/desktop/chat` | the BFF's existing `submitChatTurn` path | Delegates to the *same* function `/api/chat` uses, so memory retrieval, execution policy, attachment grants, and safety behavior are identical. The desktop app does not re-implement any of it. |
+| `GET /api/v1/desktop/sessions/:key/history` | gateway `chat.history` | Up to 200 transcript messages, with gateway timestamps and the same character budget as browser history. Reading history subscribes the BFF to session updates. |
+| `POST /api/v1/desktop/chat` | the BFF's existing `submitChatTurn` path | Accepts `{sessionKey, message, agentId?, attachmentIds?, mode?}`. With `mode: "steer"` the BFF attempts to steer the running reply. A refusal or idle session takes the full memory-aware turn path. The response includes `delivered` (`steer` or `turn`) and the gateway acknowledgement. |
+| `POST /api/v1/desktop/chat/abort` | `chat.abort` | Send `{sessionKey, runId?}` to stop a reply. Watch the terminal chat event. |
+| `GET /api/v1/desktop/sessions?archived=1` | BFF archive and gateway sessions | Lists only archived sessions. The default list contains active conversations. Rows can include `thinkingLevel` and `parentKey`. |
+| `PATCH /api/v1/desktop/sessions/:key` | `sessions.patch` | Send `{label}`, 1–120 characters after trimming. |
+| `PUT /api/v1/desktop/sessions/:key/thinking` | `sessions.patch` | Send `{level}`. Unsupported levels return HTTP 400 with the gateway message. |
+| `PUT /api/v1/desktop/sessions/:key/archive` | BFF SQLite | Send `{archived:true}` to archive or `{archived:false}` to restore. Main conversations reject archiving. |
+| `POST /api/v1/desktop/sessions/:key/compact` | `sessions.compact` | Summarize the transcript. HTTP 409 indicates an active run. |
+| `GET /api/v1/desktop/approvals` | `exec.approval.list` | Returns `{ok, approvals}` containing pending requests. |
+| `POST /api/v1/desktop/approvals/:id` | `exec.approval.resolve` | Send `{decision}` with `allow-once`, `allow-always` or `deny`. |
+| `GET /api/v1/desktop/agents/:agentId/models` | Agent configuration | Returns `{agentId,current,models}` with enabled model choices. |
+| `PUT /api/v1/desktop/sessions/:key/model` | `sessions.patch` | Send `{agentId, model}` to choose an enabled model. |
+| `GET /api/v1/desktop/sessions/:key/execution-target` | BFF routing preferences | Returns `{target,devices}` with Mac and Windows availability. |
+| `PUT /api/v1/desktop/sessions/:key/execution-target` | BFF routing and gateway patch | Send `{target,agentId?}`. Targets are `mac`, `neutral` (both), and `windows`. |
+| `DELETE /api/v1/desktop/sessions/:key` | `sessions.delete` | Deletes the session and its transcript. Accepts optional `agentId`. |
+| `POST /api/v1/desktop/sessions/:key/reset` | `sessions.reset` | Starts a fresh transcript. Accepts optional `agentId`. |
+| `POST /api/v1/desktop/attachments` | BFF attachment store | Send `{attachments:[{fileName,mimeType,content}]}` with base64 content. Use the returned IDs on chat submission. Up to eight files per message, each at most 20 MiB. |
 | `GET /api/v1/desktop/events` | the existing SSE fan-out | Registers with the same `broadcast()` used by `/api/events`, filtered to a desktop event allowlist. One event model, not two. |
 | `GET /api/v1/desktop/nodes` | gateway `node.list` | Read-only in V1, projected to `DesktopNodeSummary`. No shadow node registry. |
 | `GET /api/v1/desktop/files/*` | shared `DeviceFiles` service and fixed node worker | Authenticated device discovery, shared-root listing, metadata, preview, and range/download reads, plus sending chosen files and folders to (or removing them from) the server's Dropped files. No arbitrary path or command input; details in [Files across devices](../device-files.md). |
@@ -93,7 +108,16 @@ client key (5 attempts / 5 minutes) by the same logic the existing access gates 
 The desktop stream carries only:
 
 `gateway.status`, `gateway.disconnected`, `chat`, `agent`, `session.tool`, `session.message`,
-`sessions.changed`, `node.presence.alive`.
+`sessions.changed`, `node.presence.alive`, `chat.tool`, and `chat.approval`.
+
+`chat.tool` carries `sessionKey`, optional `runId`, `toolCallId`, `name`, `status`
+(`running`, `done`, or `error`), and `startedAt`. A completion can include `endedAt`.
+Optional `summary`, `command`, `output` (up to 4 KiB), and `paths` describe the call.
+
+`chat.approval` carries `id`, optional `sessionKey`, `command`, optional `cwd` and `host`,
+`requestedAt`, optional `expiresAt`, and `status` (`pending`, `approved`, `denied`, or
+`expired`). Event timestamps are Unix milliseconds. Clients can replay pending approvals
+after reconnecting.
 
 Hunting, extraction, workflow-learning, and memory-mutation events are deliberately excluded —
 those features are out of scope for the native app in V1, so their events are not exposed to it.
@@ -224,5 +248,4 @@ by the same desktop token plus server-owned shared roots. Native remote desktop 
 session launch are the separate, implemented surface documented above. Neither addition exposes
 an arbitrary node-command endpoint.
 
-`DELETE` on sessions and nodes is also omitted: V1 is read-plus-chat, and destructive gateway
-calls stay behind the browser boundary until a per-action authorization model is tested.
+Node deletion remains outside the desktop API.

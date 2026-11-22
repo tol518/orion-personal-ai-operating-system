@@ -1,3 +1,4 @@
+import { screenshotName } from "../lib/chat/workspace";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Kept in one place so the picker, a drop, and a paste all accept the same things. */
@@ -80,7 +81,7 @@ export function useAttachmentDrop({ onFiles, disabled = false, pasteWhenUnfocuse
       event.preventDefault();
       depth.current = 0;
       setIsDragging(false);
-      deliver(namedFiles(Array.from(event.dataTransfer?.files ?? [])));
+      deliver(Array.from(event.dataTransfer?.files ?? []));
     },
   };
 
@@ -111,13 +112,10 @@ function filesFromClipboard(clipboard: DataTransfer | null) {
  * of those leaves three identical rows that no one can tell apart, so each gets a timestamp.
  */
 function namedFiles(files: File[]) {
-  return files.map((file, index) => {
-    if (file.name && file.name !== "image.png") return file;
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const extension = file.type.split("/")[1]?.split("+")[0] || "png";
-    const suffix = files.length > 1 ? `-${index + 1}` : "";
-    return new File([file], `pasted-${stamp}${suffix}.${extension}`, {
-      type: file.type || "image/png",
-    });
+  const now = new Date();
+  let number = 0;
+  return files.map(file => {
+    if (file.type !== "image/png" || (file.name && file.name !== "image.png")) return file;
+    return new File([file], screenshotName(now, ++number), {type:file.type});
   });
 }
