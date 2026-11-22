@@ -401,3 +401,33 @@
     padding-inline: 0.8rem;
   }
 }
+
+@media (max-width: 767.98px) and (prefers-reduced-motion: no-preference) {
+  .orion-chat-sheet[open] {
+    animation: orion-chat-sheet-enter 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .orion-chat-sheet[open]::backdrop {
+    animation: orion-chat-backdrop-enter 180ms ease-out;
+  }
+
+  @keyframes orion-chat-sheet-enter {
+    from {
+      transform: translateY(100%);
+    }
+
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes orion-chat-backdrop-enter {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+}
