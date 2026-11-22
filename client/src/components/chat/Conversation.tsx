@@ -1,7 +1,7 @@
 import { api, type StoredAttachment } from "../../lib/api";
 import { ConversationPreferences } from "./ConversationPreferences";
 import { historyActivity } from "../../lib/chat/history";
-import { useLayoutEffect, useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useEffect, useRef, useState, type ReactNode } from "react";
 import { useStreamEvent } from "../../hooks/useStreamEvent";
 import type { AgentRoomAgent, AgentRoomSession } from "../AgentRoom";
 import {
@@ -28,6 +28,7 @@ export function Conversation({
   agentId,
   chatAgents,
   onSelectAgent,
+  workspaceHeader,
 }: {
   sessionKey: string | null;
   approvals: Approval[];
@@ -37,6 +38,7 @@ export function Conversation({
   agentId: string;
   chatAgents: AgentRoomAgent[];
   onSelectAgent?: (agentId: string) => Promise<void>;
+  workspaceHeader?: ReactNode;
 }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [streaming, setStreaming] = useState<string | null>(null);
@@ -352,12 +354,33 @@ export function Conversation({
     if (el && following.current) el.scrollTop = el.scrollHeight;
   }, [msgs, streaming, runs, approvals]);
 
+  const preferences = (
+    <ConversationPreferences
+      {...{
+        sessionKey,
+        session,
+        sessionModel,
+        agentId,
+        chatAgents,
+        onSelectAgent,
+        busy,
+      }}
+      sheet={Boolean(workspaceHeader)}
+      onCompact={reloadHistory}
+    />
+  );
   return (
     <div
       {...draft.dropProps}
       {...draft.pasteProps}
-      className={`holo-panel hud-frame flex h-full min-h-0 flex-col p-4 ${draft.isDragging ? "attachment-dropzone" : ""}`}
+      className={`holo-panel hud-frame flex h-full min-h-0 flex-col p-4 ${workspaceHeader ? "orion-chat-thread" : ""} ${draft.isDragging ? "attachment-dropzone" : ""}`}
     >
+      {workspaceHeader && (
+        <header className="orion-chat-thread-heading">
+          {workspaceHeader}
+          {preferences}
+        </header>
+      )}
       <div
         ref={scrollRef}
         onScroll={(e) => {
@@ -369,10 +392,10 @@ export function Conversation({
           );
           setJump(!following.current);
         }}
-        className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1"
+        className="orion-chat-timeline min-h-0 flex-1 space-y-3 overflow-y-auto pr-1"
       >
         {!loading && msgs.length === 0 && !streaming && !historyError && (
-          <div className="mt-6 text-center font-mono text-xs text-gray-600">
+          <div className="orion-chat-empty mt-6 text-center font-mono text-xs text-gray-600">
             {sessionKey
               ? "Fresh context. Speak to the agent…"
               : "No session available yet."}
@@ -394,7 +417,7 @@ export function Conversation({
       </div>
       {jump && (
         <button
-          className="btn-hud self-center"
+          className="orion-chat-jump btn-hud self-center"
           onClick={() => {
             const el = scrollRef.current;
             if (el) el.scrollTop = el.scrollHeight;
@@ -414,18 +437,7 @@ export function Conversation({
         stopping={stopping}
         stop={stop}
       />
-      <ConversationPreferences
-        {...{
-          sessionKey,
-          session,
-          sessionModel,
-          agentId,
-          chatAgents,
-          onSelectAgent,
-          busy,
-        }}
-        onCompact={reloadHistory}
-      />
+      {!workspaceHeader && preferences}
     </div>
   );
 }

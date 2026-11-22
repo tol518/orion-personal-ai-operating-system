@@ -6,6 +6,7 @@ import {
   Plus,
   RotateCcw,
   Trash2,
+  X,
 } from "lucide-react";
 import type { AgentRoomAgent, AgentRoomSession } from "../AgentRoom";
 import { api } from "../../lib/api";
@@ -90,30 +91,52 @@ export function ConversationRail({
       >
         <div
           className={
-            "rounded border p-2 " +
+            "orion-chat-rail-row rounded border p-2 " +
             (s.key === sessionKey
               ? "border-accent/45 bg-accent/10"
               : "border-transparent hover:border-hudborder")
           }
         >
           {editing === s.key ? (
-            <input
-              autoFocus
-              onFocus={(e) => e.currentTarget.select()}
-              maxLength={120}
-              aria-label="Conversation title"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              className="w-full rounded bg-surface-2 p-1 text-xs"
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setEditing("");
-                if (e.key === "Enter" && !e.nativeEvent.isComposing)
-                  void change(() => api.rename(s.key, label));
-              }}
-            />
+            <div className="orion-chat-rename-row flex min-w-0 items-center gap-2">
+              <input
+                autoFocus
+                onFocus={(event) => event.currentTarget.select()}
+                maxLength={120}
+                aria-label="Conversation title"
+                value={label}
+                onChange={(event) => setLabel(event.target.value)}
+                className="orion-chat-rename min-w-0 flex-1 rounded bg-surface-2 p-1 text-xs"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setEditing("");
+                  }
+                  if (event.key === "Enter" && !event.nativeEvent.isComposing)
+                    void change(() => api.rename(s.key, label));
+                }}
+              />
+              <button
+                type="button"
+                className="orion-chat-rename-save btn-hud md:hidden"
+                disabled={working}
+                onClick={() => change(() => api.rename(s.key, label))}
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                className="orion-chat-icon-button md:hidden"
+                aria-label="Cancel rename"
+                onClick={() => setEditing("")}
+              >
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
           ) : (
             <button
-              className="block w-full text-left"
+              className="orion-chat-rail-select block w-full text-left"
+              aria-current={s.key === sessionKey ? "true" : undefined}
               onClick={() => onSelectSession?.(s.key)}
             >
               <span className="block truncate text-sm">{sessionTitle(s)}</span>
@@ -130,7 +153,7 @@ export function ConversationRail({
               )}
             </button>
           )}
-          <div className="mt-1 flex gap-3 text-gray-400">
+          <div className="orion-chat-rail-actions mt-1 flex gap-3 text-gray-400">
             <button
               disabled={working}
               title="Rename"
@@ -187,20 +210,25 @@ export function ConversationRail({
     );
   }
   return (
-    <aside className="holo-panel hud-frame flex min-h-0 flex-col p-3 max-md:max-h-52">
+    <aside className="orion-chat-rail holo-panel hud-frame flex min-h-0 flex-col p-3">
       <button
         disabled={!onNewChat || working}
-        className="btn-hud flex items-center justify-center gap-2 py-2 text-xs"
+        className="orion-chat-new btn-hud flex items-center justify-center gap-2 py-2 text-xs"
         onClick={() => onNewChat && change(onNewChat)}
       >
         <Plus size={14} />
         New conversation
       </button>
-      <label className="my-2 flex items-center gap-2 text-xs">
+      <label className="orion-chat-archive-toggle my-2 flex items-center gap-2 text-xs">
         <input type="checkbox" checked={archived} onChange={toggle} />
         Show archived
       </label>
-      <div className="min-h-0 overflow-auto">
+      <div className="orion-chat-rail-list min-h-0 overflow-auto">
+        {groups.length === 0 && (
+          <p className="py-3 text-center text-sm text-gray-400">
+            {archived ? "No archived conversations" : "No conversations yet"}
+          </p>
+        )}
         {groups.map((agent) => (
           <section key={agent}>
             <h3 className="hud-label my-1">{groupName(agent)}</h3>

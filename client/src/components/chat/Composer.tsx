@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Paperclip, Send, X } from "lucide-react";
+import { Paperclip, Send, Square, X } from "lucide-react";
 import {
   ATTACHMENT_ACCEPT,
   useAttachmentDrop,
@@ -145,7 +145,7 @@ export function Composer({
     disabled,
   } = fields;
   return (
-    <div className="mt-2 rounded-lg">
+    <div className="orion-chat-composer mt-2 rounded-lg">
       {error && (
         <p role="alert" className="text-xs text-red-300">
           {error}
@@ -162,7 +162,7 @@ export function Composer({
           />
         ))}
       </div>
-      <div className="flex items-end gap-2">
+      <div className="orion-chat-composer-row flex items-end gap-2">
         <input
           ref={picker}
           hidden
@@ -175,7 +175,7 @@ export function Composer({
           }}
         />
         <button
-          className="btn-hud p-2"
+          className="orion-chat-attach btn-hud p-2"
           aria-label="Attach files"
           disabled={disabled || sending}
           onClick={() => picker.current?.click()}
@@ -188,7 +188,7 @@ export function Composer({
           value={input}
           disabled={disabled || sending}
           onChange={(e) => setInput(e.target.value)}
-          className="min-h-9 max-h-60 min-w-0 flex-1 resize-y rounded-lg border border-hudborder bg-surface-2 px-3 py-2 text-sm [field-sizing:content]"
+          className="orion-chat-input min-h-9 max-h-60 min-w-0 flex-1 resize-y rounded-lg border border-hudborder bg-surface-2 px-3 py-2 text-sm [field-sizing:content]"
           placeholder={
             busy ? "Add a message to the current reply…" : "Message the agent…"
           }
@@ -210,16 +210,18 @@ export function Composer({
         />
         {busy && (
           <button
-            className="btn-hud p-2 text-xs"
+            className="orion-chat-stop btn-hud p-2 text-xs"
+            aria-label={stopping ? "Stopping…" : "Stop"}
             disabled={stopping}
             onClick={stop}
           >
-            {stopping ? "Stopping…" : "Stop"}
+            <Square className="orion-chat-stop-icon" size={16} aria-hidden="true" />
+            <span>{stopping ? "Stopping…" : "Stop"}</span>
           </button>
         )}
         <button
           aria-label="Send message"
-          className="btn-hud p-2"
+          className="orion-chat-send btn-hud p-2"
           disabled={disabled || sending || (!input.trim() && !files.length)}
           onClick={submit}
         >

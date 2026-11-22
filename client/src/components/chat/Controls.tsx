@@ -137,6 +137,7 @@ export function SessionControls({
   busy,
   onError,
   onCompact,
+  showLabels,
 }: {
   session?: Parameters<typeof thinkingLevels>[0] & {
     key: string;
@@ -146,6 +147,7 @@ export function SessionControls({
   busy: boolean;
   onError: (error: string) => void;
   onCompact: () => Promise<void>;
+  showLabels: boolean;
 }) {
   const [level, setLevel] = useState(session?.thinkingLevel ?? "");
   const [saving, setSaving] = useState(false);
@@ -178,20 +180,23 @@ export function SessionControls({
   return (
     <>
       {options.length > 0 && (
-        <select
-          className="rounded border border-hudborder bg-surface-2 p-1 text-xs"
-          aria-label="Thinking level"
-          disabled={!sessionKey || saving}
-          value={level}
-          onChange={(e) => change(e.target.value)}
-        >
-          <option value="" disabled>
-            Thinking level
-          </option>
-          {options.map((option) => (
-            <option key={option}>{option}</option>
-          ))}
-        </select>
+        <label className={showLabels ? "orion-chat-setting-field" : "contents"}>
+          {showLabels && <span>Thinking level</span>}
+          <select
+            className="rounded border border-hudborder bg-surface-2 p-1 text-xs"
+            aria-label="Thinking level"
+            disabled={!sessionKey || saving}
+            value={level}
+            onChange={(e) => change(e.target.value)}
+          >
+            <option value="" disabled>
+              Thinking level
+            </option>
+            {options.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+        </label>
       )}
       <button
         className="btn-hud px-2 py-1 text-xs"

@@ -32,7 +32,8 @@ export function Bubble({
   return (
     <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 font-mono text-sm ${
+        data-role={role}
+        className={`orion-chat-bubble max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 font-mono text-sm ${
           mine
             ? "border border-hudborder-light bg-accent/10 text-accent-hover"
             : "border border-hudborder bg-surface-2 text-gray-200"

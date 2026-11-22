@@ -370,7 +370,7 @@ export default function App() {
         );
       case "chat":
         return (
-          <div className="h-[calc(100vh-8rem)] md:h-[calc(100vh-4rem)]">
+          <div className="orion-chat-page md:h-[calc(100vh-4rem)]">
             <Chat
               sessionKey={sessionKey}
               sessions={sessions}
